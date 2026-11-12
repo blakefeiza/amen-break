@@ -114,7 +114,16 @@
     const b = e.target.closest('[data-ab]'); if (!b) return; ab = b.dataset.ab; paintAB(); applyScene(scene);
   }));
   // restart the loop from the top
-  $$('[data-act="playBreak"]').forEach((b) => b.addEventListener('click', async () => { await ensureSound(); Amen.stop(); Amen.start({ mode: 'full' }); }));
+  const breakPlaying = () => soundOn && !loopPaused && Amen.T.playing && !labPlaying;
+  $$('[data-act="playBreak"]').forEach((b) => b.addEventListener('click', async () => {
+    if (breakPlaying()) { setPaused(true); return; }                       // second click pauses
+    loopPaused = false; paintPause(); await ensureSound(); Amen.stop(); Amen.start({ mode: 'full' });
+  }));
+  let breakWas = null;
+  function paintBreak() {
+    const on = breakPlaying(); if (on === breakWas) return; breakWas = on;
+    $$('[data-act="playBreak"]').forEach((b) => { b.classList.toggle('is-playing', on); $('.bk-label', b).textContent = on ? 'Pause the break' : 'Hear the break'; });
+  }
 
   // record-sleeve catalog line on each card: Side A = the break, Side B = its afterlife
   (function cat() {
@@ -479,7 +488,7 @@
       Amen.setBpm(storyBpm);
     }
     wheel.s.center = SC[scene].center(storyBpm);
-    wheel.draw(t);
+    paintBreak(); wheel.draw(t);
     if (storyVisible && wheel.cur) {
       document.documentElement.style.setProperty('--pulse', reduce ? 0 : wheel.kickPulse.toFixed(3));
       stage.style.setProperty('--gx', wheel.cur.cx + 'px'); stage.style.setProperty('--gy', wheel.cur.cy + 'px');

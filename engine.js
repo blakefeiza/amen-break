@@ -263,18 +263,22 @@
       cache[id] = u; try { sessionStorage.setItem('amen-prev-' + id, u); } catch (e) { /* ignore */ }
       return u;
     }
+    let loading = null;
     async function toggle(id) {
       id = String(id);
       if (current === id) { el.pause(); return; }
+      if (loading === id) { loading = null; emit(id, 'idle'); return; }     // second click while it loads cancels
       if (current) { const old = current; current = null; el.pause(); emit(old, 'idle'); }
-      emit(id, 'loading');
+      if (loading) emit(loading, 'idle');
+      loading = id; emit(id, 'loading');
       try {
         if (ctx) { try { await ctx.resume(); } catch (e) { /* ignore */ } }
-        el.src = await urlFor(id); current = id;
+        const u = await urlFor(id); if (loading !== id) return;
+        el.src = u; current = id; loading = null;
         setDuck(true); await el.play(); emit(id, 'playing');
-      } catch (e) { current = null; setDuck(false); emit(id, 'error'); }
+      } catch (e) { if (loading === id) loading = null; current = null; setDuck(false); emit(id, 'error'); }
     }
-    function stopAll() { if (current) el.pause(); }
+    function stopAll() { if (loading) { const l = loading; loading = null; emit(l, 'idle'); } if (current) el.pause(); }
     return { toggle, stopAll, get current() { return current; } };
   })();
 
