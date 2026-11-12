@@ -122,12 +122,18 @@
         const t = oc.createOscillator(); t.type = 'triangle'; t.frequency.value = 230;
         const tg = env(oc, 0.2, 0.002, 0, 0.05); t.connect(tg); tg.connect(oc.destination); t.start(0); t.stop(0.08);
       }),
-      ride: render(0.5, (oc) => {
-        const hp = oc.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 6200;
-        const bp = oc.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 9800; bp.Q.value = 0.45;
-        const g = env(oc, 0.9, 0.001, 0, 0.48); metals(oc, hp); hp.connect(bp); bp.connect(g); g.connect(oc.destination);
-        const p = oc.createOscillator(); p.type = 'sine'; p.frequency.value = 3900;
-        const pg = env(oc, 0.12, 0.001, 0, 0.3); p.connect(pg); pg.connect(oc.destination); p.start(0); p.stop(0.3);
+      ride: render(0.8, (oc) => {
+        // stick: a very short bright tick
+        const tk = oc.createBufferSource(); tk.buffer = noiseBuf(oc, 0.03); const th = oc.createBiquadFilter(); th.type = 'highpass'; th.frequency.value = 5200;
+        const tg = env(oc, 0.5, 0.0008, 0, 0.012); tk.connect(th); th.connect(tg); tg.connect(oc.destination); tk.start(0);
+        // bell/ping: inharmonic partials with their own decay times, like a struck ride
+        [[2780, 1, 0.55], [3640, 0.8, 0.42], [4950, 0.65, 0.34], [6430, 0.5, 0.26], [8170, 0.32, 0.18]].forEach(([f, a, d]) => {
+          const o = oc.createOscillator(); o.type = 'sine'; o.frequency.value = f; const g = env(oc, 0.16 * a, 0.0012, 0, d); o.connect(g); g.connect(oc.destination); o.start(0); o.stop(d + 0.02);
+        });
+        // wash: soft band of noise that blooms a little after the hit
+        const w = oc.createBufferSource(); w.buffer = noiseBuf(oc, 0.8); const wb = oc.createBiquadFilter(); wb.type = 'bandpass'; wb.frequency.value = 5600; wb.Q.value = 0.7;
+        const wg = oc.createGain(); wg.gain.setValueAtTime(0.0001, 0); wg.gain.linearRampToValueAtTime(0.2, 0.012); wg.gain.exponentialRampToValueAtTime(0.0008, 0.7);
+        w.connect(wb); wb.connect(wg); wg.connect(oc.destination); w.start(0);
       }),
       crash: render(1.5, (oc) => {
         const hp = oc.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 3200;
@@ -364,10 +370,40 @@
       }
       return out.sort((a, b) => a.t - b.t);
     };
+    // expected vs actual: fold the clip onto the pattern; template hits that the audio lacks are "missing", strong onsets the
+    // template does not have (kick or snare) are "added". Only the four-bar lock is compared.
+    const compare = (bpm, phase, L) => {
+      const sd = 60 / bpm / 4, reps = Math.floor((dur - phase) / (L * sd)); const diff = [];
+      if (L !== 64 || reps < 2) return diff;
+      const hit = (b, s, k) => { const idx = Math.round((phase + (k * L + s) * sd) * fr); return idx >= 0 && idx < n ? bands[b][idx] : 0; };
+      const prof = (b, s) => { let sum = 0; for (let k = 0; k < reps; k++) sum += hit(b, s, k); return sum / reps; };
+      const every = (b, s, th) => { for (let k = 0; k < reps; k++) if (hit(b, s, k) < th) return false; return true; };
+      // how strong the clip's real kicks and backbeat snares are, so an "added" note has to be comparable to them
+      const lvl = [0, 1].map((b) => { const v = []; for (let s = 0; s < 64; s++) if ((b === 0 ? m.K[s] >= 0.6 : m.S[s] >= 0.9)) v.push(prof(b, s)); v.sort((x, y) => x - y); return v.length ? v[Math.floor(v.length / 2)] : 1; });
+      for (let s = 0; s < 64; s++) {
+        const k = prof(0, s), sn = prof(1, s);
+        if (m.K[s] >= 0.6 && k < 0.2) diff.push({ src: s, voice: 'kick', kind: 'missing' });
+        else if (!m.K[s] && k >= Math.max(0.85, 0.8 * lvl[0]) && every(0, s, 0.6)) diff.push({ src: s, voice: 'kick', kind: 'added' });
+        if (m.S[s] >= 0.9 && sn < 0.25) diff.push({ src: s, voice: 'snare', kind: 'missing' });
+        else if (!m.S[s] && sn >= Math.max(1, 0.9 * lvl[1]) && every(1, s, 0.8)) diff.push({ src: s, voice: 'snare', kind: 'added' });
+      }
+      // a busy clip (vocals, hats, other drums leaking into the bands) cannot be compared honestly
+      if (diff.filter((d) => d.kind === 'added').length > 4) return [];
+      return diff;
+    };
+    const attachDiff = (lk) => {
+      lk.diff = compare(lk.bpm, lk.phase, lk.L);
+      const sd = 60 / lk.bpm / 4;
+      for (const d of lk.diff) {
+        if (d.kind !== 'added') continue;
+        for (let k = 0; lk.phase + k * lk.L * sd < dur; k++) { const t = lk.phase + (k * lk.L + d.src) * sd, idx = Math.round(t * fr); if (t >= 0 && idx < n && bands[d.voice === 'kick' ? 0 : 1][idx] >= 0.6) lk.events.push({ t, src: d.src, voice: d.voice, vel: 0.8, extra: true }); }
+      }
+      lk.events.sort((a, b) => a.t - b.t); return lk;
+    };
     return {
       s1: best1.score, s4: best4.score, d1, d4, m1: best1.score - d1, m4: best4.score - d4, z1: (best1.score - n1.mu) / n1.sd, z4: (best4.score - n4.mu) / n4.sd,
-      groove: { bpm: best1.bpm, phase: best1.phase, L: 16, events: events(best1.bpm, best1.phase, 16) },
-      full: { bpm: best4.bpm, phase: best4.phase, L: 64, events: events(best4.bpm, best4.phase, 64) },
+      groove: { bpm: best1.bpm, phase: best1.phase, L: 16, events: events(best1.bpm, best1.phase, 16), diff: [] },
+      full: attachDiff({ bpm: best4.bpm, phase: best4.phase, L: 64, events: events(best4.bpm, best4.phase, 64) }),
     };
   }
 

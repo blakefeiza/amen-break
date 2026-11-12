@@ -165,6 +165,7 @@
 
       g.lineCap = 'butt';
       const grooveDim = !!(sv && sv.lock && sv.lock.type === 'groove');
+      const dmap = {}, added = []; if (sv && sv.lock && sv.lock.diff) for (const d of sv.lock.diff) { if (d.kind === 'missing') dmap[d.src + ':' + d.voice] = 1; else added.push(d); }
       for (let st = 0; st < 64; st++) {
         const h = Amen.hits(st, s.expected), ba = s.barAlpha[st >> 4];
         const infoc = s.focus ? ((((st - s.focus[0]) % 64) + 64) % 64 < s.focus[1] ? 1 : 0.28) : 1;
@@ -174,7 +175,7 @@
           if (!h[v]) continue;
           const f = this.flash[st + ':' + v], e = f ? Math.max(0, 1 - (nowMs - f) / 420) : 0;
           const width = v === 'ride' || v === 'ghost' ? w : w * (0.55 + 0.45 * h[v]);
-          const base = (v === 'ride' ? 0.55 : v === 'ghost' ? 0.6 : 0.82) * ba * infoc * (1 - dim * 0.8) * (1 - sm * 0.82 * (1 - this.lk)) * (grooveDim && st >= 32 ? 1 - 0.78 * this.lk : 1);
+          const base = (v === 'ride' ? 0.55 : v === 'ghost' ? 0.6 : 0.82) * ba * infoc * (1 - dim * 0.8) * (1 - sm * 0.82 * (1 - this.lk)) * (grooveDim && st >= 32 ? 1 - 0.78 * this.lk : 1) * (dmap[st + ':' + v] ? 1 - 0.8 * this.lk : 1);
           const col = COLORS[v];
           if (e > 0.02) arc(r, width * (1.5 + e * 0.8), st, col, e * 0.35, 0, 1);
           arc(r, width * (1 + e * 0.25), st, col, base + e * 0.35);
@@ -185,6 +186,24 @@
             g.restore();
           }
         }
+      }
+      // expected vs actual, for a locked clip: dashed outline = the written pattern has a hit here that the clip lacks;
+      // a bright, white-edged note = the clip plays a hit the written pattern does not have
+      if (this.lk > 0.02) {
+        g.save(); g.globalAlpha = this.lk;
+        g.setLineDash([R * 0.02, R * 0.02]);
+        for (const key in dmap) {
+          const [stp, v] = key.split(':'), st = +stp, [r, w] = lanes[v];
+          g.beginPath(); g.arc(0, 0, R * (r + w / 2), ang(st) + DA * 0.1, ang(st) + DA * 0.9); g.arc(0, 0, R * (r - w / 2), ang(st) + DA * 0.9, ang(st) + DA * 0.1, true); g.closePath();
+          g.lineWidth = 1.5; g.strokeStyle = 'rgba(255,255,255,' + (0.5 + 0.25 * Math.sin(nowMs / 260)) + ')'; g.stroke();
+        }
+        g.setLineDash([]);
+        for (const d of added) {
+          const [r, w] = lanes[d.voice], f = this.flash[d.src + ':' + d.voice], e = f ? Math.max(0, 1 - (nowMs - f) / 420) : 0;
+          arc(r, w * (1.55 + e * 0.5), d.src, '#ffffff', 0.35 + e * 0.3, 0, 1);
+          arc(r, w * (0.55 + 0.45 * 0.85 + e * 0.25), d.src, COLORS[d.voice], 0.95, 0, 1);
+        }
+        g.restore();
       }
       // ripples
       for (let i = this.ripples.length - 1; i >= 0; i--) {
@@ -240,6 +259,10 @@
       g.fillText(c0, 0, R * 0.035);
       g.fillStyle = '#8b8a96'; g.font = '500 ' + Math.max(8, R * 0.045) + 'px "JetBrains Mono", ui-monospace, monospace';
       g.fillText(c1, 0, R * 0.115);
+      if (sv && sm > 0.5 && sv.lock && sv.lock.diff && sv.lock.diff.length) {
+        const na = sv.lock.diff.filter((d) => d.kind === 'added').length, nm = sv.lock.diff.length - na;
+        g.fillStyle = '#f1ece0'; g.fillText([na ? '+' + na + ' NEW' : '', nm ? '\u2212' + nm + ' MISSING' : ''].filter(Boolean).join(' \u00b7 '), 0, R * 0.185);
+      }
       g.restore();
     }
   }
