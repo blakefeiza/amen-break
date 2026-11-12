@@ -396,9 +396,13 @@
       }
       saveUrls();
     }
-    const getUrl = (id) => (urlMap[id] ? Promise.resolve(urlMap[id]) : once('u' + id, async () => { await lookup([id]); if (!urlMap[id]) throw new Error('no preview'); return urlMap[id]; }));
+    const LOCAL = new Set((window.AMEN_AUDIO || []).map(String)), localUrl = (id) => 'audio/' + id + '.m4a';
+    const getUrl = (id) => (LOCAL.has(String(id)) ? Promise.resolve(localUrl(id)) : urlMap[id] ? Promise.resolve(urlMap[id]) : once('u' + id, async () => { await lookup([id]); if (!urlMap[id]) throw new Error('no preview'); return urlMap[id]; }));
+    const lookupUrl = (id) => (urlMap[id] ? Promise.resolve(urlMap[id]) : once('u' + id, async () => { await lookup([id]); if (!urlMap[id]) throw new Error('no preview'); return urlMap[id]; }));
     const getRaw = (id) => (raw.has(id) ? Promise.resolve(raw.get(id)) : once('r' + id, async () => {
-      const r = await fetch(await getUrl(id), { mode: 'cors' }); if (!r.ok) throw new Error('fetch ' + r.status);
+      let r = null;
+      if (LOCAL.has(id)) { try { r = await fetch(localUrl(id)); if (!r.ok) r = null; } catch (err) { r = null; } }
+      if (!r) { r = await fetch(await lookupUrl(id), { mode: 'cors' }); if (!r.ok) throw new Error('fetch ' + r.status); }
       const ab = await r.arrayBuffer(); raw.set(id, ab); if (raw.size > 40) raw.delete(raw.keys().next().value); return ab;
     }));
     let dctx = null;                                                  // decoding needs no user gesture and no live AudioContext
@@ -531,7 +535,7 @@
     }
 
     // ---- smart loading hooks
-    const prime = (ids) => lookup(ids.map(String)).catch(() => {});
+    const prime = (ids) => lookup(ids.map(String).filter((i) => !LOCAL.has(i))).catch(() => {});
     const prefetch = (id) => { id = String(id); if (slowNet() || raw.has(id)) return; getRaw(id).catch(() => {}); };
     const warm = (id) => { id = String(id); if (slowNet()) return; getBuf(id).then((b) => analyze(id, b)).catch(() => {}); };
     const status = (id) => (bufs.has(String(id)) ? 'ready' : raw.has(String(id)) ? 'fetched' : 'cold');
