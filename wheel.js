@@ -1,0 +1,201 @@
+/* AMEN — the Wheel. Four bars (64 sixteenth-note steps) laid around a record.
+ * Lanes, outside in: crash, ride, snare (+ ghost notes), kick. Same colors everywhere in the app.
+ */
+(function () {
+  'use strict';
+  const COLORS = { kick: '#ff3d7f', snare: '#c8ff00', ghost: '#c8ff00', ride: '#2de2ff', crash: '#ffb020' };
+  const TAU = Math.PI * 2, DA = TAU / 64;
+  const ang = (s) => -Math.PI / 2 + (s / 64) * TAU;
+  const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const BEATS = ['', 'e', '&', 'a'];
+
+  class Wheel {
+    constructor(canvas, opts) {
+      this.cv = canvas; this.g = canvas.getContext('2d');
+      this.o = Object.assign({ interactive: true, numerals: true, onPick: null }, opts);
+      this.s = {
+        layers: { kick: 1, snare: 1, ghost: 1, ride: 1, crash: 1 }, expected: false,
+        barAlpha: [1, 1, 1, 1], hl: [], ghosts: [], center: ['136', 'BPM'], focus: null, mute: 0,
+      };
+      this.layoutFn = (w, h) => ({ cx: w / 2, cy: h / 2, r: Math.min(w, h) * 0.42 });
+      this.cur = null; this.tgt = null;
+      this.ripples = []; this.lastId = 0; this.flash = {}; this.visible = true; this.hover = -1; this.pick = -1; this.pickT = 0;
+      this.kickPulse = 0; this.t0 = performance.now(); this.w = 0; this.h = 0; this.dpr = 1;
+      this.resize();
+      if ('ResizeObserver' in window) new ResizeObserver(() => this.resize()).observe(canvas.parentElement || canvas);
+      if ('IntersectionObserver' in window) new IntersectionObserver((e) => { this.visible = e[0].isIntersecting; }, { rootMargin: '100px' }).observe(canvas);
+      if (this.o.interactive) this.bindPointer();
+    }
+    setLayout(fn) { this.layoutFn = fn; this.tgt = fn(this.w, this.h); if (!this.cur) this.cur = Object.assign({}, this.tgt); }
+    set(p) { Object.assign(this.s, p); }
+    resize() {
+      const p = this.cv.parentElement || this.cv, r = p.getBoundingClientRect();
+      this.dpr = Math.min(2, window.devicePixelRatio || 1);
+      this.w = Math.max(1, r.width); this.h = Math.max(1, r.height);
+      this.cv.width = Math.round(this.w * this.dpr); this.cv.height = Math.round(this.h * this.dpr);
+      this.cv.style.width = this.w + 'px'; this.cv.style.height = this.h + 'px';
+      this.tgt = this.layoutFn(this.w, this.h); if (!this.cur) this.cur = Object.assign({}, this.tgt);
+    }
+    /* ---------- pointer: tap or drag across the record to hear that slice */
+    stepAt(ev) {
+      const r = this.cv.getBoundingClientRect(), x = ev.clientX - r.left - this.cur.cx, y = ev.clientY - r.top - this.cur.cy;
+      const d = Math.hypot(x, y), R = this.cur.r;
+      if (d < R * 0.3 || d > R * 1.06) return -1;
+      let a = Math.atan2(y, x) + Math.PI / 2; a = ((a % TAU) + TAU) % TAU;
+      return Math.floor((a / TAU) * 64) % 64;
+    }
+    bindPointer() {
+      const cv = this.cv; cv.style.touchAction = 'pan-y';
+      let down = false;
+      cv.addEventListener('pointermove', (e) => {
+        const s = this.stepAt(e); this.hover = s; cv.style.cursor = s >= 0 ? 'pointer' : 'default';
+        if (down && s >= 0 && s !== this.pick) this.doPick(s);
+      });
+      cv.addEventListener('pointerleave', () => { this.hover = -1; down = false; });
+      cv.addEventListener('pointerdown', (e) => { const s = this.stepAt(e); if (s >= 0) { down = true; this.doPick(s); } });
+      window.addEventListener('pointerup', () => { down = false; });
+    }
+    doPick(s) { this.pick = s; this.pickT = performance.now(); if (this.o.onPick) this.o.onPick(s, this); }
+    describe(s) {
+      const bar = (s >> 4) + 1, st = s & 15, beat = (st >> 2) + 1, sub = BEATS[st & 3];
+      const h = Amen.hits(s, this.s.expected), names = [];
+      if (h.kick) names.push('kick'); if (h.snare) names.push('snare'); if (h.ghost) names.push('ghost snare');
+      if (h.ride) names.push('ride'); if (h.crash) names.push('open cymbal');
+      return { bar, beat: beat + sub, names, text: 'Bar ' + bar + ' · beat ' + beat + (sub ? ' ' + sub : '') + (names.length ? ' — ' + names.join(', ') : ' — silence') };
+    }
+    /* ---------- drawing */
+    consume() {
+      const evs = Amen.eventsSince(this.lastId);
+      const nowMs = performance.now();
+      for (const e of evs) {
+        this.lastId = e.id;
+        const h = Amen.hits(e.src, e.expected);
+        for (const v of Amen.VOICES) {
+          if (!h[v] || !(e.layers ? e.layers[v] : this.s.layers[v])) continue;
+          this.ripples.push({ s: e.src, v, t: nowMs, vel: h[v] });
+          this.flash[e.src + ':' + v] = nowMs;
+          if (v === 'kick') this.kickPulse = 1;
+        }
+      }
+      if (this.ripples.length > 90) this.ripples.splice(0, this.ripples.length - 90);
+    }
+    draw(nowMs) {
+      if (!this.visible || !this.cur) return;
+      const g = this.g, k = reduce ? 1 : 0.1;
+      for (const key of ['cx', 'cy', 'r']) this.cur[key] += (this.tgt[key] - this.cur[key]) * k;
+      this.consume();
+      this.kickPulse *= 0.9;
+      g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      g.clearRect(0, 0, this.w, this.h);
+      const R = this.cur.r, s = this.s, ph = Amen.playhead();
+      g.save(); g.translate(this.cur.cx, this.cur.cy);
+
+      // disc + grooves
+      const gr = g.createRadialGradient(0, 0, R * 0.2, 0, 0, R * 1.08);
+      gr.addColorStop(0, 'rgba(255,255,255,0.05)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(0, 0, R * 1.08, 0, TAU); g.fill();
+      g.lineWidth = 1; g.strokeStyle = 'rgba(255,255,255,0.045)';
+      for (let rr = 0.34; rr < 1.02; rr += 0.034) { g.beginPath(); g.arc(0, 0, R * rr, 0, TAU); g.stroke(); }
+      g.strokeStyle = 'rgba(255,255,255,0.16)'; g.beginPath(); g.arc(0, 0, R * 1.0, 0, TAU); g.stroke();
+
+      // bar dividers + numerals
+      g.font = '800 ' + Math.max(11, R * 0.085) + 'px "Big Shoulders Display", Impact, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      for (let b = 0; b < 4; b++) {
+        const a0 = ang(b * 16);
+        g.strokeStyle = 'rgba(255,255,255,0.22)'; g.beginPath(); g.moveTo(Math.cos(a0) * R * 0.3, Math.sin(a0) * R * 0.3); g.lineTo(Math.cos(a0) * R * 1.02, Math.sin(a0) * R * 1.02); g.stroke();
+        if (this.o.numerals) {
+          const am = ang(b * 16 + 8);
+          g.fillStyle = 'rgba(255,255,255,' + (0.22 + 0.5 * s.barAlpha[b]) + ')';
+          g.fillText(String(b + 1), Math.cos(am) * R * 0.37, Math.sin(am) * R * 0.37);
+        }
+      }
+      // quarter-beat ticks on the rim
+      g.strokeStyle = 'rgba(255,255,255,0.12)';
+      for (let i = 0; i < 64; i++) {
+        const a = ang(i), len = i % 4 === 0 ? 0.035 : 0.015;
+        g.beginPath(); g.moveTo(Math.cos(a) * R * 1.0, Math.sin(a) * R * 1.0); g.lineTo(Math.cos(a) * R * (1 + len), Math.sin(a) * R * (1 + len)); g.stroke();
+      }
+
+      // focus / hover / pick wedges
+      const wedge = (a0, a1, fill) => { g.fillStyle = fill; g.beginPath(); g.arc(0, 0, R * 1.0, a0, a1); g.arc(0, 0, R * 0.3, a1, a0, true); g.closePath(); g.fill(); };
+      if (this.hover >= 0) wedge(ang(this.hover), ang(this.hover + 1), 'rgba(255,255,255,0.07)');
+      if (s.focus) wedge(ang(s.focus[0]), ang(s.focus[0] + s.focus[1]), 'rgba(255,255,255,0.09)');
+      if (this.pick >= 0 && nowMs - this.pickT < 700) wedge(ang(this.pick), ang(this.pick + 1), 'rgba(255,255,255,' + (0.2 * (1 - (nowMs - this.pickT) / 700)) + ')');
+
+      // lanes
+      const lanes = { crash: [0.965, 0.075], ride: [0.875, 0.05], snare: [0.72, 0.125], ghost: [0.72, 0.05], kick: [0.5, 0.15] };
+      const dim = s.mute;
+      const arc = (r, w, step, color, alpha, spanA, spanB) => {
+        g.beginPath(); g.arc(0, 0, R * r, ang(step) + DA * (spanA == null ? 0.1 : spanA), ang(step) + DA * (spanB == null ? 0.9 : spanB));
+        g.lineWidth = R * w; g.strokeStyle = color; g.globalAlpha = Math.max(0, alpha); g.stroke(); g.globalAlpha = 1;
+      };
+      // ghost slots (where a "normal" drummer would have played)
+      g.save(); g.setLineDash([R * 0.02, R * 0.02]);
+      for (const gs of s.ghosts) {
+        const [r, w] = lanes[gs.v];
+        g.beginPath(); g.arc(0, 0, R * (r + w / 2), ang(gs.s) + DA * 0.1, ang(gs.s) + DA * 0.9); g.arc(0, 0, R * (r - w / 2), ang(gs.s) + DA * 0.9, ang(gs.s) + DA * 0.1, true); g.closePath();
+        g.lineWidth = 1.5; g.strokeStyle = 'rgba(255,255,255,' + (0.45 + 0.25 * Math.sin(nowMs / 260)) + ')'; g.stroke();
+      }
+      g.restore();
+
+      g.lineCap = 'butt';
+      for (let st = 0; st < 64; st++) {
+        const h = Amen.hits(st, s.expected), ba = s.barAlpha[st >> 4];
+        const infoc = s.focus ? ((((st - s.focus[0]) % 64) + 64) % 64 < s.focus[1] ? 1 : 0.28) : 1;
+        for (const v of ['ride', 'crash', 'snare', 'ghost', 'kick']) {
+          const [r, w] = lanes[v];
+          if (!s.layers[v]) { if (h[v]) arc(r, 0.012, st, '#ffffff', 0.07 * ba); continue; }
+          if (!h[v]) continue;
+          const f = this.flash[st + ':' + v], e = f ? Math.max(0, 1 - (nowMs - f) / 420) : 0;
+          const width = v === 'ride' || v === 'ghost' ? w : w * (0.55 + 0.45 * h[v]);
+          const base = (v === 'ride' ? 0.55 : v === 'ghost' ? 0.6 : 0.82) * ba * infoc * (1 - dim * 0.8);
+          const col = COLORS[v];
+          if (e > 0.02) arc(r, width * (1.5 + e * 0.8), st, col, e * 0.35, 0, 1);
+          arc(r, width * (1 + e * 0.25), st, col, base + e * 0.35);
+          if (v === 'crash') { // starburst
+            g.save(); g.strokeStyle = col; g.globalAlpha = (0.4 + e * 0.6) * ba; g.lineWidth = 1.5;
+            const a = ang(st + 0.5);
+            for (let i = 0; i < 9; i++) { const aa = a + (i - 4) * 0.09; g.beginPath(); g.moveTo(Math.cos(aa) * R * 0.915, Math.sin(aa) * R * 0.915); g.lineTo(Math.cos(aa) * R * 1.0, Math.sin(aa) * R * 1.0); g.stroke(); }
+            g.restore();
+          }
+        }
+      }
+      // ripples
+      for (let i = this.ripples.length - 1; i >= 0; i--) {
+        const rp = this.ripples[i], t = (nowMs - rp.t) / 520;
+        if (t >= 1) { this.ripples.splice(i, 1); continue; }
+        const [r, w] = lanes[rp.v];
+        g.beginPath(); g.arc(0, 0, R * (r + t * 0.1), ang(rp.s) - DA * t * 0.5, ang(rp.s) + DA * (1 + t * 0.5));
+        g.lineWidth = Math.max(1, R * w * 0.25 * (1 - t)); g.strokeStyle = COLORS[rp.v]; g.globalAlpha = (1 - t) * 0.6 * rp.vel; g.stroke(); g.globalAlpha = 1;
+      }
+      // highlights
+      for (const hl of s.hl) {
+        const [r, w] = lanes[hl.v], pulse = 0.5 + 0.5 * Math.sin(nowMs / 220 + hl.s);
+        g.beginPath(); g.arc(0, 0, R * r, ang(hl.s) - DA * 0.08, ang(hl.s) + DA * 1.08);
+        g.lineWidth = R * (w + 0.05 + pulse * 0.02); g.strokeStyle = hl.color || '#ffffff'; g.globalAlpha = 0.22 + pulse * 0.3; g.stroke(); g.globalAlpha = 1;
+      }
+
+      // playhead
+      if (ph) {
+        const a = ang(ph.src % 64);
+        g.save(); g.lineCap = 'round';
+        for (let i = 14; i >= 0; i--) {
+          const aa = a - i * 0.012; g.strokeStyle = 'rgba(255,255,255,' + (0.5 * (1 - i / 15)) + ')'; g.lineWidth = i === 0 ? 2.2 : 1.4;
+          g.beginPath(); g.moveTo(Math.cos(aa) * R * 0.3, Math.sin(aa) * R * 0.3); g.lineTo(Math.cos(aa) * R * 1.04, Math.sin(aa) * R * 1.04); g.stroke();
+        }
+        g.restore();
+      }
+
+      // center label
+      const cr = R * 0.265;
+      g.fillStyle = 'rgba(7,7,11,0.92)'; g.beginPath(); g.arc(0, 0, cr, 0, TAU); g.fill();
+      g.lineWidth = 2; g.strokeStyle = 'rgba(255,61,127,' + (0.35 + this.kickPulse * 0.65) + ')'; g.beginPath(); g.arc(0, 0, cr * (1 + this.kickPulse * 0.04), 0, TAU); g.stroke();
+      g.fillStyle = '#f1ece0'; g.font = '900 ' + Math.max(14, R * 0.15) + 'px "Big Shoulders Display", Impact, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+      g.fillText(s.center[0], 0, R * 0.035);
+      g.fillStyle = '#8b8a96'; g.font = '500 ' + Math.max(8, R * 0.045) + 'px "JetBrains Mono", ui-monospace, monospace';
+      g.fillText(s.center[1], 0, R * 0.115);
+      g.restore();
+    }
+  }
+  window.Wheel = Wheel; window.AMEN_COLORS = COLORS;
+})();

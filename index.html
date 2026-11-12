@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Seven Seconds — the Amen break</title>
+<meta name="description" content="Four bars played by a drummer in 1969 became the most borrowed drum break in history. Hear it, take it apart, chop it, and follow its echoes.">
+<meta name="theme-color" content="#07070b">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css?v=11">
+</head>
+<body>
+<div class="progress" id="progress" aria-hidden="true"></div>
+<header class="hud">
+  <a class="brand" href="#top" aria-label="Back to top"><b>AMEN</b><span>the 7-second story</span></a>
+  <button class="sound" id="sound" aria-pressed="false" aria-label="Turn sound on">
+    <span class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="sound-label">Sound off</span>
+  </button>
+</header>
+
+<main id="top">
+<!-- ============================================================ THE STORY (sticky wheel) -->
+<section class="story" id="story">
+  <div class="stage" id="stage">
+    <div class="glow" aria-hidden="true"></div>
+    <canvas id="wheel" aria-label="The Amen break as a record: four bars, 64 steps. Tap a slice to hear it."></canvas>
+    <p class="caption" id="caption" aria-live="polite"></p>
+  </div>
+
+  <div class="steps">
+    <article class="step step--hero" data-scene="hero">
+      <div class="hero">
+        <div class="hero-top">
+          <p class="kicker">A data story in four bars</p>
+          <h1>Seven <span>seconds</span></h1>
+        </div>
+        <div class="hero-bottom">
+          <p class="lede">In 1969 a drummer played four bars nobody noticed. Fifty-seven years later, everyone is still borrowing them.</p>
+          <button class="btn btn--big" id="startSound"><span class="play-ico" aria-hidden="true"></span><span id="startLabel">Tap to hear it</span></button>
+          <p class="hint">Sound on &middot; headphones recommended &middot; tap the record to poke it</p>
+        </div>
+      </div>
+      <div class="scroll-cue" aria-hidden="true"><span></span>scroll</div>
+    </article>
+
+    <article class="step" data-scene="origin">
+      <div class="card">
+        <p class="kicker">1969</p>
+        <h2>A B-side nobody noticed</h2>
+        <p>The Winstons cut &ldquo;Amen, Brother&rdquo; in about twenty minutes as the flip side of &ldquo;Color Him Father,&rdquo; the song that won the Grammy. Then, one minute and 26 seconds in, everyone else stops playing.</p>
+        <p>Drummer Gregory Coleman plays four bars alone. That&rsquo;s the break.</p>
+        <div class="facts"><span><b>1:26</b>starts</span><span><b>4</b>bars</span><span><b>~136</b>BPM</span><span><b>7s</b>long</span></div>
+        <div class="row">
+          <button class="btn btn--primary" data-act="playBreak"><span class="play-ico" aria-hidden="true"></span>Hear the break</button>
+          <button class="btn" data-preview="427200416"><span class="play-ico" aria-hidden="true"></span><span class="pv-label">Original, 30s</span></button>
+        </div>
+        <p class="note">The drums you hear on this page are rebuilt in your browser from published transcriptions. They are not the 1969 recording, and the groove&rsquo;s human timing is simplified. The 30-second Apple preview is the real track and may not reach the break.</p>
+        <div class="rowline"><span>The tune it&rsquo;s built on</span><button class="btn btn--sm" data-preview="1442919795"><span class="play-ico" aria-hidden="true"></span><span class="pv-label">The Impressions, 1964</span></button></div>
+      </div>
+    </article>
+
+    <article class="step" data-scene="funk">
+      <div class="card">
+        <p class="kicker">Bars 1 &amp; 2</p>
+        <h2>First, just funk</h2>
+        <p>For two bars Coleman plays a standard funk groove: kick, snare on 2 and 4, ride cymbal on every eighth note. Slow it down and it&rsquo;s a hip-hop beat.</p>
+        <p class="small">Tap a part to mute it. Tap the record to hear any slice.</p>
+        <div class="chips" id="layerChips">
+          <button class="chip" data-layer="ride" aria-pressed="true"><i style="--c:var(--ride)"></i>Ride</button>
+          <button class="chip" data-layer="kick" aria-pressed="true"><i style="--c:var(--kick)"></i>Kick</button>
+          <button class="chip" data-layer="snare" aria-pressed="true"><i style="--c:var(--snare)"></i>Snare</button>
+          <button class="chip" data-layer="ghost" aria-pressed="true"><i style="--c:var(--snare)" class="thin"></i>Ghost snares</button>
+          <button class="chip" data-layer="crash" aria-pressed="true"><i style="--c:var(--crash)"></i>Open cymbal</button>
+        </div>
+      </div>
+    </article>
+
+    <article class="step" data-scene="late">
+      <div class="card">
+        <p class="kicker">Bar 3</p>
+        <h2>The snare shows up late</h2>
+        <p>On beat four the snare slides back half a beat. Your ear expects a repeat and gets a stumble. Flip between what Coleman played and the beat you&rsquo;d expect.</p>
+        <div class="seg" role="group" aria-label="Which version to hear">
+          <button data-ab="real" aria-pressed="true">As played</button><button data-ab="exp" aria-pressed="false">What you&rsquo;d expect</button>
+        </div>
+        <p class="small legend"><span class="dash"></span> dashed outline = where the snare &ldquo;should&rdquo; land</p>
+      </div>
+    </article>
+
+    <article class="step" data-scene="missing">
+      <div class="card">
+        <p class="kicker">Bar 4</p>
+        <h2>Then the downbeat vanishes</h2>
+        <p>No kick on the &ldquo;one.&rdquo; Instead: ghost snares tumble in, the kick doubles up, and an open cymbal splashes where the ride should be. The groove trips over itself, and that&rsquo;s the hook.</p>
+        <div class="seg" role="group" aria-label="Which version to hear">
+          <button data-ab="real" aria-pressed="true">As played</button><button data-ab="exp" aria-pressed="false">What you&rsquo;d expect</button>
+        </div>
+      </div>
+    </article>
+
+    <article class="step" data-scene="djs">
+      <div class="card">
+        <p class="kicker">1986</p>
+        <h2>DJs find it</h2>
+        <p>A DJ compilation called <i>Ultimate Breaks and Beats</i> puts &ldquo;Amen, Brother&rdquo; on a record made for looping. That same year Stetsasonic and Salt-N-Pepa sample it.</p>
+        <p>Slow a record down and everything drops with it: the tempo, the pitch, the weight. The break turns into a hip-hop drum kit.</p>
+        <ul class="tracks" data-tracks="Bust That Groove|I Desire|Wordz of Wizdom"></ul>
+      </div>
+    </article>
+
+    <article class="step" data-scene="escape">
+      <div class="card">
+        <p class="kicker">1988</p>
+        <h2>The year it escaped</h2>
+        <p>Mantronix chops it up until it&rsquo;s the center of &ldquo;King of the Beats.&rdquo; N.W.A and Rob Base &amp; DJ E-Z Rock use it in hits the same year. A drum break becomes a sound everyone knows without knowing why.</p>
+        <ul class="tracks" data-tracks="Straight Outta Compton|King of the Beats|Keep It Going Now"></ul>
+      </div>
+    </article>
+
+    <article class="step" data-scene="jungle">
+      <div class="card">
+        <p class="kicker">1992 &rarr;</p>
+        <h2>Then Britain speeds it up</h2>
+        <p>Producers push the break past 160 BPM and slice it into rolling, stuttering snare patterns: jungle, then drum &amp; bass. It&rsquo;s easy to cut up, and that&rsquo;s most of the story. Everything is higher and tighter now, just like a record on fast-forward.</p>
+        <ul class="tracks" data-tracks="Demon|The Crane|Poison|Come on My Selector"></ul>
+        <a class="btn btn--primary" href="#lab">Your turn <span aria-hidden="true">&darr;</span></a>
+      </div>
+    </article>
+  </div>
+</section>
+
+<!-- ============================================================ CHOP LAB -->
+<section class="lab" id="lab">
+  <div class="wrap">
+    <p class="kicker">Your turn</p>
+    <h2 class="h-big">Chop it like it&rsquo;s 1993</h2>
+    <p class="lead">Each pad is one beat of the break. Pick a slot, tap a pad, and rebuild the loop. Reorder the slices and the same four bars become a new groove.</p>
+    <div class="lab-grid">
+      <div class="lab-viz">
+        <div class="lab-wheel"><canvas id="wheel2" aria-label="The break, with the slice you are playing highlighted"></canvas></div>
+        <canvas id="scope" class="scope" aria-hidden="true"></canvas>
+      </div>
+      <div class="lab-ctl">
+        <div class="transport">
+          <button class="btn btn--primary btn--big" id="labPlay"><span class="play-ico" aria-hidden="true"></span><span id="labPlayLabel">Loop it</span></button>
+          <label class="bpm"><span class="bpm-top"><span>Speed</span><output id="bpmOut">136 BPM</output></span><input type="range" id="bpm" min="70" max="190" value="136" step="1" aria-label="Tempo in beats per minute"></label>
+        </div>
+        <div class="presets" id="tempoPresets"><span class="lbl">Tempo</span>
+          <button class="chip" data-bpm="95">Hip-hop 95</button><button class="chip" data-bpm="136">Original 136</button><button class="chip" data-bpm="168">Jungle 168</button><button class="chip" data-bpm="180">Hardcore 180</button>
+        </div>
+        <p class="lbl">The loop &mdash; 16 slots, left to right</p>
+        <div class="slots" id="slots" role="group" aria-label="Sequence slots"></div>
+        <p class="lbl">Slices &mdash; one beat each (rows: ride, snare, kick)</p>
+        <div class="pads" id="pads" role="group" aria-label="Slice pads"></div>
+        <div class="presets" id="seqPresets"><span class="lbl">Arrange</span>
+          <button class="chip" data-seq="orig">Original</button><button class="chip" data-seq="loop">Bars 1&ndash;2 loop</button><button class="chip" data-seq="rev">Backwards</button><button class="chip" data-seq="stut">Stutter</button><button class="chip" data-seq="rand">Shuffle</button>
+        </div>
+        <div class="row"><button class="btn" id="share">Copy link to my chop</button><span class="toast" id="toast" role="status"></span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ ECHOES -->
+<section class="echoes" id="echoes">
+  <div class="wrap">
+    <p class="kicker">The echoes</p>
+    <h2 class="h-big">Everyone who borrowed it</h2>
+    <p class="lead">Seventeen years passed before anyone sampled the break. Then it didn&rsquo;t stop. Scroll through <b id="nTracks">0</b> tracks that use it, oldest first. The chart grows with you: each ring is a decade, and the bright circle is the year you&rsquo;re on. Press play on any track and its dot lights up.</p>
+    <div class="filters" id="filters" role="group" aria-label="Filter by family"></div>
+  </div>
+  <div class="wrap echo-scrolly" id="echoScrolly">
+    <div class="echo-stage" id="echoStage">
+      <div class="echo-hud">
+        <div class="yearbig" id="yearBig" aria-live="polite">1969</div>
+        <div class="echo-meta"><span id="countRead">0 tracks</span><button class="btn btn--sm" id="tour"><span class="play-ico" aria-hidden="true"></span><span id="tourLabel">Play along</span></button></div>
+      </div>
+      <figure class="echo-chart"><svg id="echo" viewBox="0 0 1000 1000" role="group" aria-label="Radial chart of tracks that sample the Amen break, by year and genre family"></svg></figure>
+    </div>
+    <ol class="echo-list" id="echoList" aria-label="Tracks that sample the Amen break, oldest first"></ol>
+  </div>
+  <div class="wrap">
+    <p class="note wide">Sources: MusicBrainz &ldquo;samples material&rdquo; relationships for the 1969 recording (CC0), plus tracks whose Wikipedia articles name the Amen break. I kept tracks that have a working 30-second preview so every dot is playable, which leaves out many obscure samples. The families are my grouping, by artist, and are approximate.</p>
+  </div>
+</section>
+
+<!-- ============================================================ CODA -->
+<section class="coda" id="coda">
+  <div class="wrap">
+    <p class="kicker">The drummer</p>
+    <h2 class="h-big">Who got paid?</h2>
+    <ol class="tl">
+      <li><b>1996</b><p>Richard Spencer, the bandleader who owned the copyright, first learns the break has been sampled &mdash; after the three-year statute of limitations has run out. He never receives royalties for it.</p></li>
+      <li><b>2006</b><p>Gregory Coleman, the drummer who played those four bars, dies homeless and destitute.</p></li>
+      <li><b>2015</b><p>Two British DJs raise more than &pound;18,000 for Spencer through a GoFundMe campaign. He dies in 2020.</p></li>
+      <li><b>2026</b><p>The Library of Congress adds &ldquo;Amen, Brother&rdquo; to the National Recording Registry.</p></li>
+    </ol>
+    <div class="row center">
+      <button class="btn btn--primary" data-preview="427200416"><span class="play-ico" aria-hidden="true"></span><span class="pv-label">Hear the original, 30s</span></button>
+      <a class="btn" target="_blank" rel="noopener" href="https://music.apple.com/us/search?term=The%20Winstons%20Amen%20Brother">Apple Music &nearr;</a>
+      <a class="btn" target="_blank" rel="noopener" href="https://www.youtube.com/results?search_query=The+Winstons+Amen+Brother">YouTube &nearr;</a>
+    </div>
+    <div class="sources">
+      <p class="lbl">Sources &amp; notes</p>
+      <ul>
+        <li><a target="_blank" rel="noopener" href="https://en.wikipedia.org/wiki/Amen_break">Wikipedia, &ldquo;Amen break&rdquo;</a> &mdash; history, royalties, early samples.</li>
+        <li><a target="_blank" rel="noopener" href="https://musicbrainz.org/recording/61ef31c0-d65b-4d76-b9bb-80eec6e107de">MusicBrainz</a> &mdash; the &ldquo;samples material&rdquo; relationships (CC0).</li>
+        <li><a target="_blank" rel="noopener" href="https://ethanhein.substack.com/p/building-the-amen-break">Ethan Hein, &ldquo;Building the Amen break&rdquo;</a> and <a target="_blank" rel="noopener" href="https://audiolabs-erlangen.com/resources/MIR/2016-IEEE-TASLP-DrumSeparation/AmenBreak">AudioLabs Erlangen</a> &mdash; the bar-by-bar pattern.</li>
+        <li><a target="_blank" rel="noopener" href="https://www.cbsnews.com/news/national-recording-registry-2026-taylor-swift-beyonce-ray-charles/">CBS News</a> &mdash; the 2026 National Recording Registry class.</li>
+        <li>30-second previews via the Apple iTunes Search API. The drums on this page are synthesized and are not the 1969 recording.</li>
+      </ul>
+    </div>
+    <p class="end"><a href="#top">&uarr; Back to the record</a></p>
+  </div>
+</section>
+</main>
+
+<script src="tracks.js?v=11"></script>
+<script src="engine.js?v=11"></script>
+<script src="wheel.js?v=11"></script>
+<script src="app.js?v=11"></script>
+</body>
+</html>
