@@ -263,7 +263,7 @@
    *  frequency bin is a drum, so bass lines, pads and vocals mostly drop out. Self-contained (it also runs in a Worker). */
   function percAnalyze(x) {
     const sr = 22050, N = 1024, hop = 256, B = N / 2 + 1, F = Math.floor((x.length - N) / hop), fr = sr / hop;
-    if (F < 80) { const z = new Float32Array(Math.max(1, F)); return { kn: z, sn: z.slice(), hn: z.slice(), fr }; }
+    if (F < 80) { const z = new Float32Array(Math.max(1, F)); return { kn: z, sn: z.slice(), hn: z.slice(), bn: z.slice(), fr }; }
     const win = new Float32Array(N); for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1));
     const rev = new Uint16Array(N); for (let i = 1; i < N; i++) rev[i] = (rev[i >> 1] >> 1) | ((i & 1) ? N >> 1 : 0);
     const cs = new Float64Array(N / 2), sn = new Float64Array(N / 2); for (let i = 0; i < N / 2; i++) { cs[i] = Math.cos(-2 * Math.PI * i / N); sn[i] = Math.sin(-2 * Math.PI * i / N); }
@@ -276,17 +276,17 @@
       }
       for (let k = 0; k < B; k++) S[f * B + k] = Math.sqrt(re[k] * re[k] + im[k] * im[k]);
     }
-    const W = 13, h = W >> 1, tmp = new Float32Array(W), e = [new Float32Array(F), new Float32Array(F), new Float32Array(F)];
+    const W = 13, h = W >> 1, tmp = new Float32Array(W), e = [new Float32Array(F), new Float32Array(F), new Float32Array(F), new Float32Array(F)];
     for (let k = 2; k < 470; k++) {
       const band = k < 7 ? 0 : k < 21 ? 1 : k >= 80 && k < 200 ? 1 : k >= 280 && k < 460 ? 2 : -1; if (band < 0) continue;
       const wgt = k >= 80 && k < 200 ? 0.6 : 1;
       for (let f = 0; f < F; f++) {
         for (let d = -h, c = 0; d <= h; d++, c++) tmp[c] = S[Math.min(F - 1, Math.max(0, f + d)) * B + k];
-        tmp.sort(); const p = S[f * B + k] - tmp[h]; if (p > 0) e[band][f] += p * wgt;
+        tmp.sort(); const p = S[f * B + k] - tmp[h]; if (p > 0) { e[band][f] += p * wgt; if (k >= 7 && k < 21) e[3][f] += p; }
       }
     }
     const out = e.map((a) => { const o = new Float32Array(F); for (let f = 1; f < F; f++) o[f] = Math.max(0, a[f] - 0.5 * a[f - 1]); return o; });
-    return { kn: out[0], sn: out[1], hn: out[2], fr };
+    return { kn: out[0], sn: out[1], hn: out[2], bn: out[3], fr };
   }
 
   /* ------------------------------------------------------------------ finding the break inside a clip
@@ -298,11 +298,12 @@
    */
   function matchBreak(m) {
     const fr = m.fr, W = [0.45, 0.4, 0.15], NAME = ['kick', 'snare', 'ghost', 'ride', 'crash'], BAND = [0, 1, 1, 2, 2];
-    const bands = [m.kn, m.sn, m.hn].map((a) => {
+    const raws = [];
+    const bands = [m.kn, m.sn, m.hn, m.bn || m.sn].map((a) => {
       const n = a.length, srt = Float32Array.from(a).sort(), p = srt[Math.floor(n * 0.95)] || 1e-6, d = new Float32Array(n), o = new Float32Array(n);
       for (let i = 0; i < n; i++) d[i] = Math.min(1.5, a[i] / p);
       for (let i = 0; i < n; i++) { let mx = 0; for (let j = Math.max(0, i - 2); j <= Math.min(n - 1, i + 2); j++) if (d[j] > mx) mx = d[j]; o[i] = mx; }
-      return o;
+      raws.push(d); return o;
     });
     const n = bands[0].length, dur = n / fr;
     const prep = (L, vs) => (vs || [m.K, m.S, m.H]).map((v) => {
@@ -361,42 +362,59 @@
       return best;
     };
     const d1 = decoy(16, best1.bpm), d4 = decoy(64, best4.bpm);
+    const near = (b, idx, w) => { let mx = 0; for (let j = Math.max(0, idx - w); j <= Math.min(n - 1, idx + w); j++) if (bands[b][j] > mx) mx = bands[b][j]; return mx; };
     const events = (bpm, phase, L) => {
       const sd = 60 / bpm / 4, out = [];
       for (let k = 0; phase + k * L * sd < dur; k++) for (const [step, v, vel] of m.ev) {
         if (L === 16 && step >= 16) continue;
         const t = phase + (k * L + step) * sd, idx = Math.round(t * fr); if (t < 0 || idx >= n) continue;
-        if (bands[BAND[v]][idx] >= 0.3) out.push({ t, src: L === 16 ? step + (k % 2) * 16 : step, voice: NAME[v], vel });
+        if (near(BAND[v], idx, Math.max(1, Math.round(0.3 * sd * fr))) >= 0.3) out.push({ t, src: L === 16 ? step + (k % 2) * 16 : step, voice: NAME[v], vel });
       }
       return out.sort((a, b) => a.t - b.t);
     };
-    // expected vs actual: fold the clip onto the pattern; template hits that the audio lacks are "missing", strong onsets the
-    // template does not have (kick or snare) are "added". Only the four-bar lock is compared.
-    const compare = (bpm, phase, L) => {
-      const sd = 60 / bpm / 4, reps = Math.floor((dur - phase) / (L * sd)); const diff = [];
-      if (L !== 64 || reps < 2) return diff;
-      const hit = (b, s, k) => { const idx = Math.round((phase + (k * L + s) * sd) * fr); return idx >= 0 && idx < n ? bands[b][idx] : 0; };
-      const prof = (b, s) => { let sum = 0; for (let k = 0; k < reps; k++) sum += hit(b, s, k); return sum / reps; };
-      const every = (b, s, th) => { for (let k = 0; k < reps; k++) if (hit(b, s, k) < th) return false; return true; };
-      // how strong the clip's real kicks and backbeat snares are, so an "added" note has to be comparable to them
-      const lvl = [0, 1].map((b) => { const v = []; for (let s = 0; s < 64; s++) if ((b === 0 ? m.K[s] >= 0.6 : m.S[s] >= 0.9)) v.push(prof(b, s)); v.sort((x, y) => x - y); return v.length ? v[Math.floor(v.length / 2)] : 1; });
-      for (let s = 0; s < 64; s++) {
-        const k = prof(0, s), sn = prof(1, s);
-        if (m.K[s] >= 0.6 && k < 0.2) diff.push({ src: s, voice: 'kick', kind: 'missing' });
-        else if (!m.K[s] && k >= Math.max(0.85, 0.8 * lvl[0]) && every(0, s, 0.6)) diff.push({ src: s, voice: 'kick', kind: 'added' });
-        if (m.S[s] >= 0.9 && sn < 0.25) diff.push({ src: s, voice: 'snare', kind: 'missing' });
-        else if (!m.S[s] && sn >= Math.max(1, 0.9 * lvl[1]) && every(1, s, 0.8)) diff.push({ src: s, voice: 'snare', kind: 'added' });
-      }
-      // a busy clip (vocals, hats, other drums leaking into the bands) cannot be compared honestly
-      if (diff.filter((d) => d.kind === 'added').length > 4) return [];
-      return diff;
-    };
+    // expected vs actual for a four-bar lock. "missing": the pattern has a kick/backbeat that the clip never plays (searched +-0.45 step on
+    // every repeat). "added": a kick or snare peak that is not at a written hit, at the nearest half step; seen on most repeats = solid,
+    // once = faint. Everything the clip plays is also queued as a live event so the wheel lights it when it is heard.
     const attachDiff = (lk) => {
-      lk.diff = compare(lk.bpm, lk.phase, lk.L);
-      const sd = 60 / lk.bpm / 4;
-      for (const d of lk.diff) {
-        if (d.kind !== 'added') continue;
-        for (let k = 0; lk.phase + k * lk.L * sd < dur; k++) { const t = lk.phase + (k * lk.L + d.src) * sd, idx = Math.round(t * fr); if (t >= 0 && idx < n && bands[d.voice === 'kick' ? 0 : 1][idx] >= 0.6) lk.events.push({ t, src: d.src, voice: d.voice, vel: 0.8, extra: true }); }
+      lk.diff = [];
+      const bpm = lk.bpm, phase = lk.phase, L = lk.L, sd = 60 / bpm / 4, reps = Math.floor((dur - phase) / (L * sd)); if (L !== 64 || reps < 1) return lk;
+      const w = Math.max(1, Math.round(0.45 * sd * fr));
+      const have = (b, s, k) => near(b, Math.round((phase + (k * L + s) * sd) * fr), w);
+      for (let s = 0; s < 64; s++) {
+        for (const [b, voice, tpl, th] of [[0, 'kick', m.K, 0.6], [1, 'snare', m.S, 0.9]]) {
+          if (tpl[s] < th) continue;
+          let any = 0, seen = 0; for (let k = 0; k < reps; k++) { if (phase + (k * L + s) * sd >= dur - 0.05) continue; seen++; if (have(b, s, k) >= 0.35) any++; }
+          if (seen >= 2 && any === 0) lk.diff.push({ src: s, voice, kind: 'missing' });
+        }
+      }
+      const found = new Map();
+      // how hard this clip's own written kicks and backbeats hit, so an extra note has to be about as strong to count
+      const medOf = (b, tpl, lo) => { const v = []; for (let k = 0; k < reps; k++) for (let s = 0; s < 64; s++) if (tpl[s] >= lo) { const idx = Math.round((phase + (k * L + s) * sd) * fr); if (idx >= 0 && idx < n) v.push(near(b, idx, Math.max(1, Math.round(0.3 * sd * fr)))); } v.sort((x, y) => x - y); return v.length ? v[Math.floor(v.length / 2)] : 1; };
+      const mK = medOf(0, m.K, 0.6), mS = medOf(3, m.S, 0.9);
+      [[0, 'kick', m.K, Math.max(0.7, 0.85 * mK)], [3, 'snare', m.S, Math.max(0.85, 0.85 * mS)]].forEach(([b, voice, tpl, th]) => {
+        const d = raws[b];
+        for (let i = 3; i < n - 3; i++) {
+          const v = d[i]; if (v < th) continue;
+          let top = true; for (let j = i - 5; j <= i + 5; j++) if (j >= 0 && j < n && d[j] > v) { top = false; break; }
+          if (!top || (d[i - 1] === v)) continue;                      // one peak per plateau
+          const t = i / fr, x = (t - phase) / sd; if (x < -0.5) continue;
+          const pos = Math.round(((x % 64) + 64) % 64 * 2) / 2 % 64, rep = Math.floor(x / 64);
+          let nearTpl = false; for (let s = 0; s < 64; s++) { const dd = Math.abs(s - pos); if (tpl[s] >= 0.3 && Math.min(dd, 64 - dd) <= 0.75) { nearTpl = true; break; } }
+          if (nearTpl) continue;
+          if (voice === 'snare') {            // a kick's click also shows up in the snare body band: ignore snare candidates sitting on a kick
+            let onKick = false; for (let s = 0; s < 64; s++) { const dd = Math.abs(s - pos); if (m.K[s] >= 0.3 && Math.min(dd, 64 - dd) <= 0.75) onKick = true; }
+            const w2 = Math.max(2, Math.round(0.35 * sd * fr)); for (let j = Math.max(0, i - w2); j <= Math.min(n - 1, i + w2); j++) if (raws[0][j] >= 0.7) onKick = true;
+            if (onKick) continue;
+          }
+          const key = pos + ':' + voice, f = found.get(key) || { src: pos, voice, kind: 'added', hits: [], str: 0 };
+          f.hits.push({ t, rep }); f.str = Math.max(f.str, v); found.set(key, f);
+        }
+      });
+      const need = 2;   // an extra note must come back on most repeats, or it is just something else in the mix
+      const adds = [...found.values()].map((f) => Object.assign(f, { count: new Set(f.hits.map((h) => h.rep)).size })).filter((f) => f.count >= Math.min(need, reps)).sort((a, b) => b.count - a.count || b.str - a.str).slice(0, 7);
+      for (const f of adds) {
+        lk.diff.push({ src: f.src, voice: f.voice, kind: 'added', count: f.count, reps });
+        for (const h of f.hits) lk.events.push({ t: h.t, src: f.src, voice: f.voice, vel: 0.8, extra: true });
       }
       lk.events.sort((a, b) => a.t - b.t); return lk;
     };

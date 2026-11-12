@@ -199,9 +199,11 @@
         }
         g.setLineDash([]);
         for (const d of added) {
-          const [r, w] = lanes[d.voice], f = this.flash[d.src + ':' + d.voice], e = f ? Math.max(0, 1 - (nowMs - f) / 420) : 0;
-          arc(r, w * (1.55 + e * 0.5), d.src, '#ffffff', 0.35 + e * 0.3, 0, 1);
-          arc(r, w * (0.55 + 0.45 * 0.85 + e * 0.25), d.src, COLORS[d.voice], 0.95, 0, 1);
+          const [r, wd] = lanes[d.voice], f = this.flash[d.src + ':' + d.voice], e = f ? Math.max(0, 1 - (nowMs - f) / 420) : 0;
+          const fl = Math.floor(d.src), fr = d.src - fl, a0 = fr ? 0.12 : 0.1, a1 = fr ? 0.46 : 0.9, solid = d.count >= 2 || d.reps < 2;
+          const k = this.lk * (solid ? 1 : 0.55);
+          arc(r, wd * (1.5 + e * 0.5), fl, '#ffffff', (0.3 + e * 0.3) * k, fr + a0, fr + a1);
+          arc(r, wd * (0.55 + 0.4 + e * 0.25), fl, COLORS[d.voice], 0.95 * k, fr + a0, fr + a1);
         }
         g.restore();
       }
