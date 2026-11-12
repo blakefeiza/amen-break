@@ -14,3 +14,7 @@ Preview: launch config `amen-break` (port 4340) in `BF Workspace/.claude/launch.
   adds hand-verified ones). Only tracks with a working 30-second Apple preview are kept (33). Re-run takes ~6 minutes (iTunes rate limit).
 
 Notes: genre families are an editorial grouping by artist. Two undated MusicBrainz tracks and alternate versions are dropped.
+
+## Audio credits
+
+The 30-second clips in `audio/` are Apple's promotional previews, included for commentary and education only. All recordings belong to their respective artists and rights holders. This project is non-commercial. If you are a rights holder and want a clip removed, open an issue and it will be deleted.
