@@ -12,7 +12,7 @@
 
   const BASE_BPM = 136;
   const VOICES = ['kick', 'snare', 'ghost', 'ride', 'crash'];
-  const VOICE_GAIN = { kick: 1, snare: 0.9, ghost: 0.85, ride: 0.55, crash: 0.6 };
+  const VOICE_GAIN = { kick: 1, snare: 0.85, ghost: 0.7, ride: 0.38, crash: 0.42 };
 
   const eighths = (skip) => [0, 2, 4, 6, 8, 10, 12, 14].filter((s) => !(skip || []).includes(s));
   const BARS = [
@@ -42,23 +42,25 @@
   const T = {
     bpm: BASE_BPM, playing: false, tick: 0, next: 0, timer: null, mode: 'full', seq: null,
     layers: { kick: 1, snare: 1, ghost: 1, ride: 1, crash: 1 }, expected: false, swing: 0.055,
-    audible: false, domain: 'perf', events: [], evId: 0, duck: false,
+    audible: false, domain: 'perf', events: [], evId: 0, duck: false, vol: 0.5,
   };
+  const lvl = () => 0.7 * T.vol * T.vol;      // 50% on the slider is deliberately gentle; 100% is about the old default
+  const pvl = () => 0.8 * T.vol * T.vol;      // song previews are mastered hot, so they get the same curve
   const now = () => (T.domain === 'ctx' && ctx ? ctx.currentTime : performance.now() / 1000);
 
   function ensureCtx() {
     if (ctx) return ctx;
     const AC = window.AudioContext || window.webkitAudioContext;
     ctx = new AC({ latencyHint: 'interactive' });
-    bus = ctx.createGain(); bus.gain.value = 0.9;
+    bus = ctx.createGain(); bus.gain.value = 0.8;
     const shaper = ctx.createWaveShaper();
     const n = 1024, curve = new Float32Array(n);
-    for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; curve[i] = Math.tanh(x * 2.1) / Math.tanh(2.1); }
+    for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; curve[i] = Math.tanh(x * 1.6) / Math.tanh(1.6); }
     shaper.curve = curve; shaper.oversample = '2x';
-    const tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.frequency.value = 11000;
+    const tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.frequency.value = 8500;
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -16; comp.knee.value = 8; comp.ratio.value = 4; comp.attack.value = 0.003; comp.release.value = 0.12;
-    out = ctx.createGain(); out.gain.value = 0.85;
+    out = ctx.createGain(); out.gain.value = lvl();
     analyser = ctx.createAnalyser(); analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0.6;
     bus.connect(shaper); shaper.connect(tone); tone.connect(comp); comp.connect(out); out.connect(ctx.destination);
     comp.connect(analyser);
@@ -224,14 +226,20 @@
       const delta = ctx.currentTime - performance.now() / 1000;
       T.next += delta; T.events.forEach((e) => (e.time += delta)); T.domain = 'ctx';
     }
-    T.audible = true; out.gain.setTargetAtTime(0.85, ctx.currentTime, 0.02);
+    T.audible = true; out.gain.setTargetAtTime(T.duck ? 0 : lvl(), ctx.currentTime, 0.02);
     return true;
   }
   function mute() { T.audible = false; if (out) out.gain.setTargetAtTime(0, ctx.currentTime, 0.02); }
-  function setDuck(on) {
-    T.duck = on; if (out) out.gain.setTargetAtTime(on || !T.audible ? 0 : 0.85, ctx.currentTime, 0.03);
+  function setDuck(on, tc) {
+    T.duck = on; if (out) out.gain.setTargetAtTime(on || !T.audible ? 0 : lvl(), ctx.currentTime, tc || 0.03);
   }
-  function unmute() { T.audible = true; if (out) out.gain.setTargetAtTime(T.duck ? 0 : 0.85, ctx.currentTime, 0.02); }
+  function unmute() { T.audible = true; if (out) out.gain.setTargetAtTime(T.duck ? 0 : lvl(), ctx.currentTime, 0.02); }
+
+  function setVolume(v) {
+    T.vol = Math.max(0, Math.min(1, v));
+    if (out && T.audible && !T.duck) out.gain.setTargetAtTime(lvl(), ctx.currentTime, 0.03);
+    Preview.setVolume(T.vol);
+  }
 
   /** Short synthesized blip (used to sonify the Echoes chart). */
   function ping(freq, when, dur, gain, type) {
@@ -245,11 +253,11 @@
 
   /* ------------------------------------------------------------------ 30-second previews (Apple iTunes Search API) */
   const Preview = (function () {
-    const el = new Audio(); el.preload = 'none';
+    const el = new Audio(); el.preload = 'none'; let fadeMul = 1, fadeRaf = 0; const applyEl = () => { el.volume = Math.max(0, Math.min(1, pvl() * fadeMul)); }; applyEl();
     let current = null; const cache = {};
     const emit = (id, state) => document.dispatchEvent(new CustomEvent('amen:preview', { detail: { id: String(id), state } }));
-    el.addEventListener('ended', () => { const id = current; current = null; if (id) emit(id, 'idle'); setDuck(false); });
-    el.addEventListener('pause', () => { if (current && !el.ended) { const id = current; current = null; emit(id, 'idle'); setDuck(false); } });
+    el.addEventListener('ended', () => { const id = current; current = null; if (id) emit(id, 'idle'); setDuck(false, 0.3); });
+    el.addEventListener('pause', () => { if (current && !el.ended) { const id = current; current = null; emit(id, 'idle'); setDuck(false, 0.3); } });
     el.addEventListener('error', () => { if (current) { const id = current; current = null; emit(id, 'error'); setDuck(false); } });
     async function urlFor(id) {
       if (cache[id]) return cache[id];
@@ -264,7 +272,7 @@
       return u;
     }
     let loading = null;
-    async function toggle(id) {
+    async function toggle(id, opts) {
       id = String(id);
       if (current === id) { el.pause(); return; }
       if (loading === id) { loading = null; emit(id, 'idle'); return; }     // second click while it loads cancels
@@ -275,16 +283,40 @@
         if (ctx) { try { await ctx.resume(); } catch (e) { /* ignore */ } }
         const u = await urlFor(id); if (loading !== id) return;
         el.src = u; current = id; loading = null;
-        setDuck(true); await el.play(); emit(id, 'playing');
+        setDuck(true, opts && opts.fade ? 0.5 : 0.03); await el.play(); emit(id, 'playing');
       } catch (e) { if (loading === id) loading = null; current = null; setDuck(false); emit(id, 'error'); }
     }
-    function stopAll() { if (loading) { const l = loading; loading = null; emit(l, 'idle'); } if (current) el.pause(); }
-    return { toggle, stopAll, get current() { return current; } };
+    // iOS Safari ignores script control of media volume; the page tells people to use the phone's buttons there
+    function setVolume() { applyEl(); }
+    function fadeTo(target, ms, done) {
+      cancelAnimationFrame(fadeRaf);
+      if (volumeLocked()) { fadeMul = target; applyEl(); if (done) done(); return; }
+      const from = fadeMul, t0 = performance.now();
+      const step = (t) => { const k = Math.min(1, (t - t0) / ms); fadeMul = from + (target - from) * k; applyEl(); if (k < 1) fadeRaf = requestAnimationFrame(step); else if (done) done(); };
+      fadeRaf = requestAnimationFrame(step);
+    }
+    /** Start a preview with a fade-in while the synth loop fades out. */
+    async function auto(id) {
+      id = String(id); if (current === id || loading === id) return;
+      cancelAnimationFrame(fadeRaf); fadeMul = 0; applyEl();
+      await toggle(id, { fade: true });
+      if (current === id) fadeTo(1, 1800); else { fadeMul = 1; applyEl(); }
+    }
+    /** Fade the current preview out and bring the synth loop back underneath it. */
+    function fadeStop(ms) {
+      if (!current && !loading) return;
+      setDuck(false, 0.35);
+      fadeTo(0, ms || 900, () => { if (current) el.pause(); fadeMul = 1; applyEl(); });
+    }
+    function volumeLocked() { const old = el.volume; el.volume = old > 0.5 ? 0.25 : 0.75; const locked = Math.abs(el.volume - (old > 0.5 ? 0.25 : 0.75)) > 0.001; el.volume = old; return locked; }
+    function stopAll() { cancelAnimationFrame(fadeRaf); fadeMul = 1; applyEl(); if (loading) { const l = loading; loading = null; emit(l, 'idle'); } if (current) el.pause(); }
+    return { toggle, auto, fadeStop, stopAll, setVolume, volumeLocked, get current() { return current; } };
   })();
 
   window.Amen = {
     BASE_BPM, VOICES, BARS, EXPECTED, hits, T, start, stop, playhead, eventsSince, audition,
-    enable, mute, unmute, setDuck, ping, scope, Preview, srcOf,
+    enable, mute, unmute, setDuck, ping, scope, Preview, srcOf, setVolume,
+    get vol() { return T.vol; },
     get ctx() { return ctx; }, get ready() { return !!kit; }, get kit() { return kit; },
     setBpm(b) { T.bpm = b; }, setLayers(l) { Object.assign(T.layers, l); },
   };

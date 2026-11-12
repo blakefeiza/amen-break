@@ -21,15 +21,41 @@
 
   function paintSound() {
     soundBtn.setAttribute('aria-pressed', soundOn); soundBtn.setAttribute('aria-label', soundOn ? 'Turn sound off' : 'Turn sound on');
-    $('.sound-label', soundBtn).textContent = soundOn ? 'Sound on' : 'Sound off';
+    $('.sound-label', soundBtn).innerHTML = '<span class="hide-sm">Sound </span>' + (soundOn ? 'on' : 'off');
     startBtn.classList.toggle('on', soundOn); $('#startLabel').textContent = soundOn ? 'Sound on — now scroll' : 'Tap to hear it';
   }
   async function turnOn() {
     try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) { /* iOS: ignore the silent switch */ }
     try { await Amen.enable(); } catch (e) { console.warn(e); gtoast('Sound isn\u2019t available in this browser. Everything still works silently.'); return false; }
-    Amen.unmute(); soundOn = true; paintSound(); syncTransport(); return true;
+    Amen.unmute(); soundOn = true; paintSound(); syncTransport(); nudgeVolume(); scheduleAuto(scene, 1500); return true;
   }
-  function turnOff() { Amen.mute(); Amen.Preview.stopAll(); soundOn = false; paintSound(); }
+  function turnOff() { clearTimeout(autoT); autoId = null; Amen.mute(); Amen.Preview.stopAll(); soundOn = false; paintSound(); }
+  /* ---- volume: remembered, starts at 50%, and the first time sound turns on we point at it */
+  const volBtn = $('#volBtn'), volPanel = $('#volPanel'), volInput = $('#volume'), volOut = $('#volOut');
+  let volIdle = 0, nudged = false;
+  try { const s = localStorage.getItem('amen-vol'); if (s !== null && !isNaN(+s)) volInput.value = Math.round(+s * 100); } catch (e) { /* private mode */ }
+  function applyVol(save) {
+    const v = +volInput.value / 100; Amen.setVolume(v); volOut.textContent = volInput.value + '%'; volInput.setAttribute('aria-valuetext', volInput.value + ' percent');
+    $('#volHint').textContent = nudged && !volTouched ? 'Sound is on at ' + volInput.value + '%. Slide to what\u2019s comfortable.' : 'Volume ' + volInput.value + '%';
+    if (save) { try { localStorage.setItem('amen-vol', v); } catch (e) { /* ignore */ } }
+  }
+  let volTouched = false;
+  function openVol(open, auto) {
+    volPanel.hidden = !open; volBtn.setAttribute('aria-expanded', open); clearTimeout(volIdle);
+    if (open) { $('#volNote').hidden = !Amen.Preview.volumeLocked(); if (auto) volIdle = setTimeout(() => openVol(false), 8000); }
+    if (!open) volBtn.classList.remove('nudge');
+  }
+  function nudgeVolume() {
+    if (nudged) return; nudged = true; volTouched = false; applyVol(false);
+    volBtn.classList.add('nudge'); openVol(true, true); announce('Sound is on at ' + volInput.value + ' percent. A volume control is at the top right.');
+  }
+  volBtn.addEventListener('click', () => { volTouched = true; openVol(volPanel.hidden); applyVol(false); });
+  volInput.addEventListener('input', () => { volTouched = true; applyVol(true); clearTimeout(volIdle); volBtn.classList.remove('nudge'); });
+  volInput.addEventListener('change', () => { volIdle = setTimeout(() => openVol(false), 4000); });
+  document.addEventListener('pointerdown', (e) => { if (!volPanel.hidden && !e.target.closest('#volPanel, #volBtn')) openVol(false); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !volPanel.hidden) { openVol(false); volBtn.focus(); } });
+  applyVol(false);
+
   const ensureSound = async () => (soundOn ? true : turnOn());
   soundBtn.addEventListener('click', () => (soundOn ? turnOff() : turnOn()));
   startBtn.addEventListener('click', async () => { if (!soundOn) { loopPaused = false; paintPause(); Amen.stop(); await turnOn(); Amen.start({ mode: 'full' }); } else turnOff(); });
@@ -96,10 +122,25 @@
     Amen.T.expected = exp; wheel.s.expected = exp;
     if (name !== 'funk') { Amen.setLayers(ALL); paintLayers(); }
     wheel.s.barAlpha = sc.bar; wheel.s.hl = exp ? [] : sc.hl || []; wheel.s.ghosts = exp ? [] : sc.ghosts || [];
+    scheduleAuto(name, 900);
+  }
+  /* ---- featured track: when a section with a track arrives and sound is on, fade it in over the loop */
+  const AUTO = { heard: 'Futurama', djs: 'Bust That Groove', escape: 'Straight Outta Compton', jungle: 'Demon' };
+  const autoSkip = new Set();     // sections where the listener pressed pause: leave them alone
+  let autoT = 0, autoId = null, autoScene = null;
+  function scheduleAuto(name, delay) {
+    clearTimeout(autoT);
+    if (autoId && autoScene !== name) { Amen.Preview.fadeStop(900); autoId = null; delay = Math.max(delay || 0, 1600); }   // let the old one fade out first
+    if (!AUTO[name] || !soundOn || loopPaused || labPlaying || tour || autoSkip.has(name)) return;
+    autoT = setTimeout(() => {
+      if (scene !== name || !soundOn || !storyVisible || labPlaying || Amen.Preview.current) return;
+      const t = findTrack(AUTO[name]); if (!t || !t.itunesId) return;
+      autoId = String(t.itunesId); autoScene = name; Amen.Preview.auto(autoId);
+    }, delay || 900);                                                                          // dwell first, so fast scrolling stays quiet
   }
   const sceneIO = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) applyScene(e.target.dataset.scene); }), { rootMargin: '-45% 0px -45% 0px' });
   $$('.step[data-scene]').forEach((s) => sceneIO.observe(s));
-  new IntersectionObserver((es) => { storyVisible = es[0].isIntersecting; syncTransport(); }, { threshold: 0 }).observe($('#story'));
+  new IntersectionObserver((es) => { storyVisible = es[0].isIntersecting; if (!storyVisible && autoId) { Amen.Preview.fadeStop(700); autoId = null; } syncTransport(); }, { threshold: 0 }).observe($('#story'));
 
   // layer chips
   function paintLayers() { $$('#layerChips .chip').forEach((b) => b.setAttribute('aria-pressed', !!Amen.T.layers[b.dataset.layer])); }
@@ -148,6 +189,8 @@
   });
   document.addEventListener('click', (e) => {
     const b = e.target.closest('[data-preview]'); if (!b) return;
+    if (autoId && b.dataset.preview === autoId && Amen.Preview.current === autoId) autoSkip.add(autoScene);   // they paused it: no more autoplay here
+    autoId = null;
     if (labPlaying) stopLab();
     Amen.Preview.toggle(b.dataset.preview);
   });

@@ -216,3 +216,15 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 
 .hint, .scroll-cue { color: #a9a8b5; }
 @media (min-width: 1080px) { .chapters { display: flex; gap: 4px; position: absolute; left: 50%; transform: translateX(-50%); } .chapters a { color: var(--paper); text-decoration: none; font: 600 12px var(--mono); letter-spacing: .1em; text-transform: uppercase; padding: 12px 14px; border-radius: 999px; min-height: 44px; display: inline-flex; align-items: center; opacity: .78; } .chapters a:hover { opacity: 1; background: rgba(255, 255, 255, .08); } }
 @media (forced-colors: active) { .btn, .chip, .seg button, .iconbtn, .sound { border: 1px solid ButtonText; } .card { border: 1px solid CanvasText; } .erow.is-active { outline: 2px solid Highlight; } }
+
+/* ---------- volume */
+.volpanel { position: absolute; top: calc(100% - 10px); right: 12px; width: min(290px, calc(100vw - 24px)); padding: 14px 16px 12px; border-radius: 14px; background: rgba(13, 13, 20, .96); border: 1px solid rgba(255, 255, 255, .22); box-shadow: 0 18px 50px rgba(0, 0, 0, .6); pointer-events: auto; }
+.volpanel[hidden] { display: none; }
+.vol-hint { margin: 0 0 4px; font-size: 13.5px; line-height: 1.35; color: var(--paper); }
+.vol-row { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; }
+.vol-lbl { font: 600 12px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: #b3b1bd; }
+.volpanel output { font: 700 13px var(--mono); color: var(--snare); min-width: 3.2em; text-align: right; }
+.vol-note { margin: 4px 0 0; font-size: 12.5px; color: #b3b1bd; }
+.iconbtn.nudge { border-color: var(--snare); color: var(--snare); animation: halo 1.6s infinite; }
+.iconbtn[aria-expanded="true"] { border-color: var(--snare); color: var(--snare); }
+@media (max-width: 430px) { .hide-sm { display: none; } .sound { padding: 8px 12px; gap: 8px; } .hud-r { gap: 6px; } }
