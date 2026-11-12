@@ -251,6 +251,126 @@
   }
   function scope(buf) { if (analyser) analyser.getByteTimeDomainData(buf); return !!analyser; }
 
+
+
+  /** Percussive layer of a mono 22.05 kHz clip as kick / snare / hat curves: whatever rises above the sustained part of each
+   *  frequency bin is a drum, so bass lines, pads and vocals mostly drop out. Self-contained (it also runs in a Worker). */
+  function percAnalyze(x) {
+    const sr = 22050, N = 1024, hop = 256, B = N / 2 + 1, F = Math.floor((x.length - N) / hop), fr = sr / hop;
+    if (F < 80) { const z = new Float32Array(Math.max(1, F)); return { kn: z, sn: z.slice(), hn: z.slice(), fr }; }
+    const win = new Float32Array(N); for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1));
+    const rev = new Uint16Array(N); for (let i = 1; i < N; i++) rev[i] = (rev[i >> 1] >> 1) | ((i & 1) ? N >> 1 : 0);
+    const cs = new Float64Array(N / 2), sn = new Float64Array(N / 2); for (let i = 0; i < N / 2; i++) { cs[i] = Math.cos(-2 * Math.PI * i / N); sn[i] = Math.sin(-2 * Math.PI * i / N); }
+    const re = new Float64Array(N), im = new Float64Array(N), S = new Float32Array(F * B);
+    for (let f = 0; f < F; f++) {
+      for (let i = 0; i < N; i++) { re[rev[i]] = x[f * hop + i] * win[i]; im[rev[i]] = 0; }
+      for (let size = 2; size <= N; size <<= 1) {
+        const half = size >> 1, step = N / size;
+        for (let i = 0; i < N; i += size) for (let j = 0, k = 0; j < half; j++, k += step) { const a = i + j, b = a + half, tr = re[b] * cs[k] - im[b] * sn[k], ti = re[b] * sn[k] + im[b] * cs[k]; re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti; }
+      }
+      for (let k = 0; k < B; k++) S[f * B + k] = Math.sqrt(re[k] * re[k] + im[k] * im[k]);
+    }
+    const W = 13, h = W >> 1, tmp = new Float32Array(W), e = [new Float32Array(F), new Float32Array(F), new Float32Array(F)];
+    for (let k = 2; k < 470; k++) {
+      const band = k < 7 ? 0 : k < 21 ? 1 : k >= 80 && k < 200 ? 1 : k >= 280 && k < 460 ? 2 : -1; if (band < 0) continue;
+      const wgt = k >= 80 && k < 200 ? 0.6 : 1;
+      for (let f = 0; f < F; f++) {
+        for (let d = -h, c = 0; d <= h; d++, c++) tmp[c] = S[Math.min(F - 1, Math.max(0, f + d)) * B + k];
+        tmp.sort(); const p = S[f * B + k] - tmp[h]; if (p > 0) e[band][f] += p * wgt;
+      }
+    }
+    const out = e.map((a) => { const o = new Float32Array(F); for (let f = 1; f < F; f++) o[f] = Math.max(0, a[f] - 0.5 * a[f - 1]); return o; });
+    return { kn: out[0], sn: out[1], hn: out[2], fr };
+  }
+
+  /* ------------------------------------------------------------------ finding the break inside a clip
+   * Self-contained on purpose: this function is also stringified into a Worker.
+   * Input: band novelty curves (kick, snare, hat) at `fr` Hz plus the break's template. For every tempo and alignment it
+   * folds the clip onto one bar (and onto the full four bars), builds a per-band hit profile averaged over the repeats,
+   * and correlates it with the template. Extra hits in the wrong places (a busy bass line, a generic funk beat) lower the
+   * correlation, so only a real Amen pattern scores high.
+   */
+  function matchBreak(m) {
+    const fr = m.fr, W = [0.45, 0.4, 0.15], NAME = ['kick', 'snare', 'ghost', 'ride', 'crash'], BAND = [0, 1, 1, 2, 2];
+    const bands = [m.kn, m.sn, m.hn].map((a) => {
+      const n = a.length, srt = Float32Array.from(a).sort(), p = srt[Math.floor(n * 0.95)] || 1e-6, d = new Float32Array(n), o = new Float32Array(n);
+      for (let i = 0; i < n; i++) d[i] = Math.min(1.5, a[i] / p);
+      for (let i = 0; i < n; i++) { let mx = 0; for (let j = Math.max(0, i - 2); j <= Math.min(n - 1, i + 2); j++) if (d[j] > mx) mx = d[j]; o[i] = mx; }
+      return o;
+    });
+    const n = bands[0].length, dur = n / fr;
+    const prep = (L, vs) => (vs || [m.K, m.S, m.H]).map((v) => {
+      const t = new Float32Array(L); let mean = 0; for (let i = 0; i < L; i++) { t[i] = v[i]; mean += v[i]; } mean /= L;
+      let nn = 0; for (let i = 0; i < L; i++) { t[i] -= mean; nn += t[i] * t[i]; } return { t, nn: Math.sqrt(nn) || 1 };
+    });
+    const tp1 = prep(16), tp4 = prep(64), P = new Float32Array(64);
+    const score = (tp, L, bpm, phase) => {
+      const sd = 60 / bpm / 4, loop = L * sd, reps = Math.floor((dur - phase) / loop); if (reps < 2) return -1;
+      let total = 0;
+      for (let b = 0; b < 3; b++) {
+        const arr = bands[b]; P.fill(0, 0, L);
+        for (let k = 0; k < reps; k++) for (let s = 0; s < L; s++) P[s] += arr[Math.round((phase + (k * L + s) * sd) * fr)];
+        let mean = 0; for (let s = 0; s < L; s++) mean += P[s]; mean /= L;
+        let num = 0, pp = 0; const t = tp[b].t; for (let s = 0; s < L; s++) { const x = P[s] - mean; num += x * t[s]; pp += x * x; }
+        total += W[b] * Math.max(-0.2, num / ((Math.sqrt(pp) * tp[b].nn) || 1));
+      }
+      return total;
+    };
+    const scan = (tp, L, bpm, lo, hi, step) => { let bs = -9, bp = lo; for (let ph = lo; ph < hi; ph += step) { const sc = score(tp, L, bpm, ph); if (sc > bs) { bs = sc; bp = ph; } } return { score: bs, phase: bp }; };
+    // stage A: one bar (the groove of bars 1-2), every tempo from 70 to 200 BPM
+    const A = [];
+    for (let bpm = 70; bpm <= 200; bpm += 1) { const r = scan(tp1, 16, bpm, 0, 16 * 60 / bpm / 4, 0.01); A.push({ bpm, phase: r.phase, score: r.score }); }
+    A.sort((x, y) => y.score - x.score);
+    const tops = []; for (const c of A) { if (tops.every((t) => Math.abs(t.bpm - c.bpm) > 2.5)) tops.push(c); if (tops.length >= 4) break; }
+    // refine each of the best tempos, then try the full four bars
+    let best1 = { score: -9 }, best4 = { score: -9 };
+    for (const c of tops) {
+      let r1 = { score: -9 };
+      for (let bpm = c.bpm - 1; bpm <= c.bpm + 1.001; bpm += 0.25) { const sd = 60 / bpm / 4, r = scan(tp1, 16, bpm, Math.max(0, c.phase - 0.03), c.phase + 0.03, 0.005); if (r.score > r1.score) r1 = { bpm, phase: r.phase, score: r.score }; }
+      if (r1.score > best1.score) best1 = r1;
+      const sd = 60 / r1.bpm / 4;
+      for (let bar = 0; bar < 4; bar++) {
+        for (let bpm = r1.bpm - 0.5; bpm <= r1.bpm + 0.501; bpm += 0.25) {
+          const ph = r1.phase + bar * 16 * 60 / bpm / 4, s = score(tp4, 64, bpm, ph); if (s > best4.score) best4 = { bpm, phase: ph, score: s };
+        }
+      }
+    }
+    // how surprising is each score? compare with random tempo/alignments
+    const nul = (tp, L) => { const v = []; let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647; for (let i = 0; i < 160; i++) { const bpm = 70 + rnd() * 130, s = score(tp, L, bpm, rnd() * L * 60 / bpm / 4); if (s > -1) v.push(s); } const mu = v.reduce((a, b) => a + b, 0) / v.length; return { mu, sd: Math.sqrt(v.reduce((a, b) => a + (b - mu) * (b - mu), 0) / v.length) || 1 }; };
+    const n1 = nul(tp1, 16), n4 = nul(tp4, 64);
+    // decoys: ordinary beats that share the backbeat with the Amen break but not its ghost snares, double kick or missing downbeat
+    const mk = (d) => { const K = new Float32Array(64), S = new Float32Array(64), H = new Float32Array(64); for (let s = 0; s < 64; s++) { const x = s % 16; K[s] = d.k[x] || 0; S[s] = d.s[x] || 0; H[s] = d.h[x] || 0; } return [K, S, H]; };
+    const even = (v) => { const o = {}; for (let i = 0; i < 16; i += 2) o[i] = v; return o; };
+    const DECOYS = [
+      { k: { 0: 0.9, 8: 0.9 }, s: { 4: 1, 12: 1 }, h: even(0.5) },
+      { k: { 0: 0.9, 10: 0.9 }, s: { 4: 1, 12: 1 }, h: even(0.5) },
+      { k: { 0: 0.9, 7: 0.6, 10: 0.9 }, s: { 4: 1, 12: 1 }, h: even(0.5) },
+      { k: { 0: 0.9, 2: 0.7, 8: 0.9 }, s: { 4: 1, 12: 1 }, h: even(0.5) },
+      { k: { 0: 0.9, 4: 0.9, 8: 0.9, 12: 0.9 }, s: { 4: 0.6, 12: 0.6 }, h: { 2: 0.5, 6: 0.5, 10: 0.5, 14: 0.5 } },
+      { k: { 0: 0.9, 10: 0.7 }, s: { 8: 1 }, h: even(0.5) },
+    ].map(mk);
+    const decoy = (L, bpm0) => {
+      let best = -9;
+      for (const v of DECOYS) { const tp = prep(L, v); for (let bpm = bpm0 - 1; bpm <= bpm0 + 1.001; bpm += 0.5) { const r = scan(tp, L, bpm, 0, 16 * 60 / bpm / 4, 0.01); if (r.score > best) best = r.score; } }
+      return best;
+    };
+    const d1 = decoy(16, best1.bpm), d4 = decoy(64, best4.bpm);
+    const events = (bpm, phase, L) => {
+      const sd = 60 / bpm / 4, out = [];
+      for (let k = 0; phase + k * L * sd < dur; k++) for (const [step, v, vel] of m.ev) {
+        if (L === 16 && step >= 16) continue;
+        const t = phase + (k * L + step) * sd, idx = Math.round(t * fr); if (t < 0 || idx >= n) continue;
+        if (bands[BAND[v]][idx] >= 0.3) out.push({ t, src: L === 16 ? step + (k % 2) * 16 : step, voice: NAME[v], vel });
+      }
+      return out.sort((a, b) => a.t - b.t);
+    };
+    return {
+      s1: best1.score, s4: best4.score, d1, d4, m1: best1.score - d1, m4: best4.score - d4, z1: (best1.score - n1.mu) / n1.sd, z4: (best4.score - n4.mu) / n4.sd,
+      groove: { bpm: best1.bpm, phase: best1.phase, L: 16, events: events(best1.bpm, best1.phase, 16) },
+      full: { bpm: best4.bpm, phase: best4.phase, L: 64, events: events(best4.bpm, best4.phase, 64) },
+    };
+  }
+
   /* ------------------------------------------------------------------ 30-second previews (Apple iTunes Search API)
    * Previews are fetched, decoded and played on the same Web Audio clock as the drums. That lets the picture be driven
    * by the clip itself: each clip is analyzed ahead of time for kick / snare / hi-hat hits, and the wheel draws every hit
@@ -292,51 +412,43 @@
       });
     };
 
-    // ---- analysis: three band envelopes rendered off the main thread, then onset picking with cross-band suppression
-    const CFG = { low: 95, lowStages: 2, mid: 1800, midQ: 0.5, high: 8000, kSup: 0.8, sSup: 0.7, hSup: 0.4, gaps: [90, 130, 80], ks: [1.4, 2, 1.9], floor: 0.2, shift: 0.005, snareLin: true, sFloor: 0.8, kShift: 0.016 };
-    function novelty(env) {
-      const n = env.length, srt = Float32Array.from(env).sort(), p95 = srt[Math.floor(n * 0.95)] || 1e-6, nv = new Float32Array(n);
-      for (let i = 2; i < n; i++) nv[i] = Math.max(0, Math.log(1 + 30 * env[i] / p95) - Math.log(1 + 30 * env[i - 2] / p95));
-      return nv;
-    }
-    function noveltyLin(env) {      // loudness-weighted: a quiet tick after silence is small, a loud hit is big
-      const n = env.length, srt = Float32Array.from(env).sort(), p95 = srt[Math.floor(n * 0.95)] || 1e-6, nv = new Float32Array(n);
-      for (let i = 2; i < n; i++) nv[i] = Math.max(0, (env[i] - env[i - 2]) / p95) * 1.6;
-      return nv;
-    }
-    function pick(nv, fr, gapMs, k, floor, shift) {
-      const n = nv.length, out = [], win = 100; let last = -1e9;
-      for (let i = 3; i < n - 3; i++) {
-        if (nv[i] < nv[i - 1] || nv[i] <= nv[i + 1]) continue;
-        let s = 0, c = 0; for (let j = Math.max(0, i - win); j < Math.min(n, i + win); j += 2) { s += nv[j]; c++; }
-        if (nv[i] > (s / c) * k + floor && ((i - last) * 1000) / fr >= gapMs) { out.push({ t: Math.max(0, i / fr - shift), v: Math.min(1, 0.3 + nv[i] / 1.2) }); last = i; }
+    // the break as three band vectors plus an event list, for the matcher
+    const TMPL = (() => {
+      const K = new Float32Array(64), S = new Float32Array(64), H = new Float32Array(64), ev = [];
+      for (let s = 0; s < 64; s++) {
+        const h = HITS[s];
+        if (h.kick) { K[s] = h.kick; ev.push([s, 0, h.kick]); }
+        if (h.snare) { S[s] += h.snare; ev.push([s, 1, h.snare]); }
+        if (h.ghost) { S[s] += h.ghost * 0.5; ev.push([s, 2, h.ghost]); }
+        if (h.ride) { H[s] += h.ride; ev.push([s, 3, h.ride]); }
+        if (h.crash) { H[s] += h.crash; ev.push([s, 4, h.crash]); }
       }
-      return out;
+      return { K, S, H, ev };
+    })();
+    let worker = null, jobId = 0; const jobs = new Map();
+    const tpl = () => ({ K: TMPL.K, S: TMPL.S, H: TMPL.H, ev: TMPL.ev });
+    const local = (x) => Object.assign(percAnalyze(x), tpl());
+    const runMatch = (x) => new Promise((res) => {
+      try {
+        if (!worker) {
+          worker = new Worker(URL.createObjectURL(new Blob(['const percAnalyze=' + percAnalyze.toString() + ';const matchBreak=' + matchBreak.toString() + ';onmessage=(e)=>{const f=percAnalyze(e.data.x);postMessage({id:e.data.id,result:matchBreak(Object.assign(f,e.data.t))})}'], { type: 'text/javascript' })));
+          worker.onmessage = (ev) => { const j = jobs.get(ev.data.id); jobs.delete(ev.data.id); if (j) j.res(ev.data.result); };
+          worker.onerror = () => { const w = worker; worker = null; if (w) w.terminate(); jobs.forEach((j) => j.res(matchBreak(local(j.x)))); jobs.clear(); };   // workers blocked: do it here
+        }
+        const id = ++jobId; jobs.set(id, { res, x }); worker.postMessage({ id, x, t: tpl() });
+      } catch (err) { res(matchBreak(local(x))); }
+    });
+    // does the clip show the break? "full": the four-bar pattern fits. "groove": just the funk bar of bars 1-2 fits.
+    const LOCK = { full: 0.45, groove: 9, grooveMargin: 0.04 };   // groove-only locks are switched off: too easy to confuse with any funk bar   // same bar the curation used: below it, a clip doesn't show the break clearly enough to play or lock
+    function decide(m) {
+      if (m.s4 >= LOCK.full) return Object.assign({ type: 'full', score: m.s4 }, m.full);
+      if (m.s1 >= LOCK.groove && m.m1 >= LOCK.grooveMargin) return Object.assign({ type: 'groove', score: m.s1 }, m.groove);
+      return null;
     }
-    const analyze = (id, buf, over) => (ana.has(id) && !over ? Promise.resolve(ana.get(id)) : once('a' + id + (over ? Math.random() : ''), async () => {
-      const C = Object.assign({}, CFG, over), sr = 32000, hop = 160, fr = sr / hop, oc = new OAC(3, Math.ceil(buf.duration * sr), sr), src = oc.createBufferSource(); src.buffer = buf;
-      const merger = oc.createChannelMerger(3), absCurve = new Float32Array([1, 0, 1]);
-      const chain = (ch, type, f, q, stages) => {
-        let node = src;
-        for (let s = 0; s < stages; s++) { const filt = oc.createBiquadFilter(); filt.type = type; filt.frequency.value = f; filt.Q.value = q; node.connect(filt); node = filt; }
-        const ws = oc.createWaveShaper(); ws.curve = absCurve; const lp = oc.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 35;
-        node.connect(ws); ws.connect(lp); lp.connect(merger, 0, ch);
-      };
-      chain(0, 'lowpass', C.low, 0.7, C.lowStages); chain(1, 'bandpass', C.mid, C.midQ, 1); chain(2, 'highpass', C.high, 0.7, 1);
-      merger.connect(oc.destination); src.start(0);
-      const rendered = await oc.startRendering(), envs = [0, 1, 2].map((ch) => {
-        const d = rendered.getChannelData(ch), n = Math.floor(d.length / hop), env = new Float32Array(n);
-        for (let k = 0; k < n; k++) { let m = 0; for (let q = k * hop; q < k * hop + hop; q++) if (d[q] > m) m = d[q]; env[k] = m; }
-        return env;
-      }), nvs = envs.map(novelty), lin = envs.map(noveltyLin);
-      const n = Math.min(nvs[0].length, nvs[1].length, nvs[2].length), kn = new Float32Array(n), sn = new Float32Array(n), hn = new Float32Array(n);
-      for (let k = 0; k < n; k++) {
-        kn[k] = Math.max(0, nvs[0][k] - C.kSup * nvs[1][k]);                 // a snare's body is not a kick
-        sn[k] = C.snareLin ? lin[1][k] : Math.max(0, nvs[1][k] - C.sSup * nvs[2][k]);   // a ride tick is not a snare: weigh by loudness
-        hn[k] = Math.max(0, nvs[2][k] - C.hSup * nvs[1][k]);                 // and a snare crack is not a hi-hat
-      }
-      const marks = [].concat(pick(kn, fr, C.gaps[0], C.ks[0], C.floor, C.kShift).map((m) => (m.b = 0, m)), pick(sn, fr, C.gaps[1], C.ks[1], C.snareLin ? C.sFloor : C.floor, C.shift).map((m) => (m.b = 1, m)), pick(hn, fr, C.gaps[2], C.ks[2], C.floor, C.shift).map((m) => (m.b = 2, m))).sort((a, b) => a.t - b.t);
-      const res = { marks, dur: buf.duration }; if (!over) ana.set(id, res); return res;
+    const analyze = (id, buf) => (ana.has(id) ? Promise.resolve(ana.get(id)) : once('a' + id, async () => {
+      const sr = 22050, oc = new OAC(1, Math.ceil(buf.duration * sr), sr), src = oc.createBufferSource(); src.buffer = buf; src.connect(oc.destination); src.start(0);
+      const x = (await oc.startRendering()).getChannelData(0).slice(), match = await runMatch(x);
+      const res = { dur: buf.duration, match, lock: decide(match) }; ana.set(id, res); return res;
     }));
 
     // ---- playback graph: source -> fade -> volume -> speakers, with an analyser tapped before the volume
@@ -394,13 +506,19 @@
     function setVolume() { if (vol) vol.gain.setTargetAtTime(pvl(), ctx.currentTime, 0.02); if (legacyOn) el.volume = pvl(); }
 
     // ---- what the picture reads every frame
-    function view() { if (!node) return null; const a = ana.get(node.id); return { id: node.id, pos: Math.max(0, ctx.currentTime - node.t0 - vlat()), dur: node.dur, marks: a ? a.marks : null }; }
-    let fxIdx = 0, fxMarks = null, fxId = null;
+    function view() {
+      if (!node) return null;
+      const a = ana.get(node.id), pos = Math.max(0, ctx.currentTime - node.t0 - vlat()), lk = a && a.lock; let lockStep = null;
+      if (lk) { const sd = 60 / lk.bpm / 4, x = (pos - lk.phase) / sd; if (x >= 0) { lockStep = ((x % lk.L) + lk.L) % lk.L; if (lk.L === 16) lockStep += (Math.floor(x / 16) % 2) * 16; } }
+      return { id: node.id, pos, dur: node.dur, lock: lk || null, lockStep, analyzed: !!a };
+    }
+    let fxIdx = 0, fxList = null, fxId = null;
     function tick() {
       const v = view(); lastView = v; fx = [];
-      if (!v || !v.marks) return v;
-      if (fxMarks !== v.marks || fxId !== v.id) { fxMarks = v.marks; fxId = v.id; fxIdx = 0; while (fxIdx < v.marks.length && v.marks[fxIdx].t < v.pos - 0.2) fxIdx++; }
-      while (fxIdx < v.marks.length && v.marks[fxIdx].t <= v.pos) fx.push(v.marks[fxIdx++]);
+      if (!v || !v.lock) return v;
+      const ev = v.lock.events;
+      if (fxList !== ev || fxId !== v.id) { fxList = ev; fxId = v.id; fxIdx = 0; while (fxIdx < ev.length && ev[fxIdx].t < v.pos - 0.2) fxIdx++; }
+      while (fxIdx < ev.length && ev[fxIdx].t <= v.pos) fx.push(ev[fxIdx++]);
       return v;
     }
     function spectrum() {
@@ -418,7 +536,9 @@
     const warm = (id) => { id = String(id); if (slowNet()) return; getBuf(id).then((b) => analyze(id, b)).catch(() => {}); };
     const status = (id) => (bufs.has(String(id)) ? 'ready' : raw.has(String(id)) ? 'fetched' : 'cold');
     return {
-      toggle, auto, fadeStop, stopAll, setVolume, prime, prefetch, warm, status, tick, spectrum, volumeLocked: () => false, analyzeBuffer: (b, over) => analyze('probe' + Math.random(), b, over || {}),
+      toggle, auto, fadeStop, stopAll, setVolume, prime, prefetch, warm, status, tick, spectrum, volumeLocked: () => false, analyzeBuffer: (b) => analyze('probe' + Math.random(), b),
+      inspect: (id) => { id = String(id); return getBuf(id).then((b) => analyze(id, b)); },
+      getBuffer: (id) => getBuf(String(id)), matchBreak, percAnalyze, tmpl: TMPL, LOCK,
       get current() { return current; }, get lastView() { return lastView; }, get fx() { return fx; },
     };
   })();

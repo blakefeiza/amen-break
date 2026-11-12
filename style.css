@@ -278,3 +278,6 @@ html, button, a, input, summary, label, [role="button"] { touch-action: manipula
 .iconbtn, .sound { transition: transform .08s, background .08s, border-color .15s; }
 .iconbtn:active, .sound:active, .seg button:active, .chip:active { transform: scale(.93); background: rgba(48, 48, 66, .95); }
 #echo .dot .halo { transition: opacity .2s; will-change: transform; }
+
+.nopv { font: 500 11.5px var(--mono); color: #8b8a96; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+.tile-nopv { margin: 6px 0 0; font: 500 12.5px/1.45 var(--mono); color: inherit; opacity: .8; } .tile-nopv a { display: inline-flex; align-items: center; min-height: 44px; margin-right: 12px; color: inherit; text-underline-offset: 3px; }

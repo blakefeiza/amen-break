@@ -137,7 +137,7 @@
     scheduleAuto(name, 900);
   }
   /* ---- featured track: when a section with a track arrives and sound is on, fade it in over the loop */
-  const AUTO = { heard: 'Little Wonder', djs: 'Bust That Groove', escape: 'Straight Outta Compton', jungle: 'Demon', mainstream: 'Slip Inside', digital: 'Aaron 2', today: 'The Real' };
+  const AUTO = { heard: 'Futurama', djs: 'Bust That Groove', escape: 'Straight Outta Compton', jungle: 'Demon', digital: 'steal the amen' };
   const autoSkip = new Set();     // sections where the listener pressed pause: leave them alone
   let autoT = 0, autoId = null, autoScene = null;
   function scheduleAuto(name, delay) {
@@ -195,28 +195,31 @@
   function findTrack(key) { key = key.toLowerCase(); return TRACKS.find((t) => (t.artist + ' ' + t.title).toLowerCase().includes(key)); }
   $$('ul.tracks[data-tracks]').forEach((ul) => {
     const subs = (ul.dataset.subs || '').split('|');
-    ul.innerHTML = ul.dataset.tracks.split('|').map((k, i) => { const t = findTrack(k); return t ? { t, sub: subs[i] } : null; }).filter(Boolean).map(({ t, sub }) => (
+    ul.innerHTML = ul.dataset.tracks.split('|').map((k, i) => { const t = findTrack(k); return t && t.shows !== false ? { t, sub: subs[i] } : null; }).filter(Boolean).map(({ t, sub }) => (
       '<li><span class="yr">' + t.year + '</span><span class="tt">' + esc(t.title) + '<span class="aa">' + esc(t.artist) + (sub ? ' \u00b7 ' + esc(sub) : '') + '</span></span>' +
       (t.itunesId ? '<button class="btn btn--sm" data-preview="' + t.itunesId + '" aria-label="Play 30-second preview of ' + esc(t.title) + ' by ' + esc(t.artist) + '"><span class="play-ico"></span><span class="pv-label">30s</span></button>'
         : '<a class="find" target="_blank" rel="noopener" href="' + apple(t) + '">find it &nearr;</a>') + '</li>'
     )).join('');
   });
-  // "Wait, that has it?" tiles: every claim below is from Wikipedia or MusicBrainz
+  // "Wait, that has it?" tiles: every claim below is from Wikipedia or MusicBrainz. Only clips that really show the pattern get a play button.
   const TILES = [
     { key: 'futurama', tag: 'A cartoon', hero: true, line: 'The opening theme of Futurama is built on it. A later remix of the theme swapped the break for newly recorded drums.' },
+    { key: 'steal the amen', tag: 'Game-music composer', line: 'C418, who scored Minecraft, titled this track “If you don’t know what to do just steal the amen break.”' },
+    { key: 'up the box', tag: 'Experimental electronic', line: 'A flanged Amen break runs through “Up the Box” on Andy Stott’s 2012 album Luxury Problems.' },
     { key: 'crystalline', tag: 'Art-pop', line: 'Björk’s song ends in a drum & bass section that uses the break.' },
     { key: 'jackie (b', tag: 'R&B', line: 'Yes, even here. The track samples “Amen, Brother.”' },
     { key: 'untitled 05', tag: 'Rap', line: 'A downtempo, jazz-flavored Kendrick Lamar track with the break underneath.' },
     { key: 'no money', tag: 'Radio dance hit', line: 'A big Galantis hit. The break lands most clearly at 1:44, past the end of the 30-second preview.' },
     { key: 'second 2 none', tag: 'Indie electronic', line: 'Mura Masa and Christine and the Queens sample it.' },
-    { key: 'the game compton', tag: 'West Coast rap', line: 'The same break N.W.A used on “Straight Outta Compton,” rediscovered in 2006.' },
     { key: 'digital circuit', tag: 'Game composer', line: 'From the composer best known for the Sonic the Hedgehog games. MusicBrainz lists it as sampling the break.' },
   ];
   $('#tiles').innerHTML = TILES.map((d) => {
-    const t = findTrack(d.key); if (!t || !t.itunesId) return '';
+    const t = findTrack(d.key); if (!t) return '';
+    const play = t.itunesId && t.shows !== false;
     return '<li class="tile' + (d.hero ? ' tile--hero' : '') + '"><div class="tile-top"><span class="tile-tag">' + esc(d.tag) + '</span><span class="tile-eq" aria-hidden="true"><i></i><i></i><i></i></span><span class="tile-year" aria-label="' + t.year + '">' + t.year + '</span></div>' +
       '<h3>' + esc(t.title.replace(/ Original Series Theme \(TV version\)/, ' theme')) + '</h3><p class="tile-by">' + esc(t.artist) + '</p><p class="tile-line">' + esc(d.line) + '</p>' +
-      '<button class="btn btn--sm" data-preview="' + t.itunesId + '" aria-label="Play 30-second preview of ' + esc(t.title) + ' by ' + esc(t.artist) + '"><span class="play-ico"></span><span class="pv-label">Listen</span></button></li>';
+      (play ? '<button class="btn btn--sm" data-preview="' + t.itunesId + '" aria-label="Play 30-second preview of ' + esc(t.title) + ' by ' + esc(t.artist) + '"><span class="play-ico"></span><span class="pv-label">Listen</span></button>'
+        : '<p class="tile-nopv">No preview: the break isn’t clear in the first 30 seconds.<br><a target="_blank" rel="noopener" href="' + apple(t) + '">Apple Music &nearr;</a><a target="_blank" rel="noopener" href="' + youtube(t) + '">YouTube &nearr;</a></p>') + '</li>';
   }).join('');
   document.addEventListener('click', (e) => {
     const b = e.target.closest('[data-preview]'); if (!b) return;
@@ -468,7 +471,7 @@
     listEl.innerHTML = order.map((t, i) => {
       const f = famOf(t.bucket);
       return '<li class="erow" data-i="' + i + '" data-f="' + t.bucket + '" style="--c:' + f.c + '"><span class="ey">' + t.year + '</span><span class="et"><b>' + esc(t.title) + '</b><em>' + esc(t.artist) + '</em></span>' +
-        '<button class="btn btn--sm" data-preview="' + t.itunesId + '" aria-label="Preview ' + esc(t.title) + '"><span class="play-ico"></span><span class="pv-label">30s</span></button>' +
+        (t.shows !== false ? '<button class="btn btn--sm" data-preview="' + t.itunesId + '" aria-label="Preview ' + esc(t.title) + '"><span class="play-ico"></span><span class="pv-label">30s</span></button>' : '<span class="nopv" title="The break isn\u2019t clear in the 30-second clip">no clip</span>') +
         '<div class="ex"><span class="badge" style="--c:' + f.c + '">' + esc(f.n) + '</span>' + (t.previewNote ? '<span>Preview: ' + esc(t.previewNote.toLowerCase()) + '</span>' : '') +
         '<a target="_blank" rel="noopener" href="' + apple(t) + '">Apple Music &nearr;</a><a target="_blank" rel="noopener" href="' + youtube(t) + '">YouTube &nearr;</a>' +
         (t.mbid ? '<a target="_blank" rel="noopener" href="https://musicbrainz.org/recording/' + t.mbid + '">MusicBrainz &nearr;</a>' : '<a target="_blank" rel="noopener" href="https://en.wikipedia.org/wiki/' + encodeURIComponent((t.wiki || 'Amen break').replace(/ /g, '_')) + '">Wikipedia &nearr;</a>') + '</div></li>';
@@ -540,7 +543,7 @@
   function paintTour() { const b = $('#tour'); b.classList.toggle('is-playing', !!tour); $('#tourLabel').textContent = tour ? 'Stop' : 'Play along'; }
   function stepTour() {
     if (!tour) return;
-    let k = tour.i; while (k < rows.length && rows[k].hidden) k++;
+    let k = tour.i; while (k < rows.length && (rows[k].hidden || order[k].shows === false)) k++;
     if (k >= rows.length) return stopTour();
     tour.i = k; jumpTo(k);
     const id = String(order[k].itunesId); if (Amen.Preview.current !== id) Amen.Preview.toggle(id);
@@ -558,7 +561,7 @@
   /* =============================================================== smart loading, and stopping samples you scroll past */
   let lastHost = null, awayHost = null, awayId = null, armed = false, armT = 0;
   const idleCb = window.requestIdleCallback || ((f) => setTimeout(f, 700));
-  const PRIME_IDS = [...new Set(TRACKS.map((t) => t.itunesId).concat([427200416, 1442919795]))];
+  const PRIME_IDS = [...new Set(TRACKS.filter((t) => t.shows !== false).map((t) => t.itunesId).concat([427200416, 1442919795]))];
   idleCb(() => { Amen.prepare(); Amen.Preview.prime(PRIME_IDS); });       // build the drum kit and look up every preview URL in one request, while the browser is idle
   const nearIO = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) Amen.Preview.prefetch(e.target.dataset.preview); }), { rootMargin: '160% 0px 160% 0px' });   // fetch bytes ~1.5 screens ahead
   const warmIO = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) Amen.Preview.warm(e.target.dataset.preview); }), { rootMargin: '45% 0px 45% 0px' });          // decode + analyze half a screen ahead
@@ -606,7 +609,7 @@
     }
     if (labVisible) { updateLabHighlights(); wheel2.draw(t); drawScope(); }
     if (playingK >= 0 && dots[playingK]) {                                   // the echoes dot beats with the clip
-      const fx = Amen.Preview.fx; for (let i = 0; i < fx.length; i++) if (fx[i].b === 0) dotPulse = 1;
+      const fx = Amen.Preview.fx; for (let i = 0; i < fx.length; i++) if (fx[i].voice === 'kick') dotPulse = 1;
       dotPulse *= 0.88; const hh = dots[playingK].el.querySelector('.halo'); if (hh) hh.style.transform = 'scale(' + (1 + 0.9 * dotPulse).toFixed(2) + ')';
     }
     requestAnimationFrame(frame);

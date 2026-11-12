@@ -21,7 +21,7 @@
       this.layoutFn = (w, h) => ({ cx: w / 2, cy: h / 2, r: Math.min(w, h) * 0.42 });
       this.cur = null; this.tgt = null;
       this.ripples = []; this.lastId = 0; this.flash = {}; this.visible = true; this.hover = -1; this.pick = -1; this.pickT = 0;
-      this.kickPulse = 0; this.sm = 0; this.t0 = performance.now(); this.w = 0; this.h = 0; this.dpr = 1;
+      this.kickPulse = 0; this.sm = 0; this.lk = 0; this.t0 = performance.now(); this.w = 0; this.h = 0; this.dpr = 1;
       this.resize();
       if ('ResizeObserver' in window) new ResizeObserver(() => this.resize()).observe(canvas.parentElement || canvas);
       if ('IntersectionObserver' in window) new IntersectionObserver((e) => { this.visible = e[0].isIntersecting; }, { rootMargin: '100px' }).observe(canvas);
@@ -103,7 +103,8 @@
       const useS = this.o.sample !== false && !this.o.static, sv = useS ? Amen.Preview.lastView : null;
       this.sm += ((sv ? 1 : 0) - this.sm) * (reduce ? 1 : 0.14); const sm = this.sm;
       this.consume();
-      if (sv) for (const m of Amen.Preview.fx) { this.ripples.push({ a: ang((m.t / sv.dur) * 64), v: m.b === 0 ? 'kick' : m.b === 1 ? 'snare' : 'ride', t: nowMs, vel: m.v }); if (m.b === 0) this.kickPulse = 1; }
+      this.lk += ((sv && sv.lock ? 1 : 0) - this.lk) * (reduce ? 1 : 0.14);
+      if (sv) for (const m of Amen.Preview.fx) { this.ripples.push({ s: m.src, v: m.voice, t: nowMs, vel: m.vel }); this.flash[m.src + ':' + m.voice] = nowMs; if (m.voice === 'kick') this.kickPulse = 1; }
       this.kickPulse *= 0.9;
       g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
       g.clearRect(0, 0, this.w, this.h);
@@ -163,6 +164,7 @@
       g.restore();
 
       g.lineCap = 'butt';
+      const grooveDim = !!(sv && sv.lock && sv.lock.type === 'groove');
       for (let st = 0; st < 64; st++) {
         const h = Amen.hits(st, s.expected), ba = s.barAlpha[st >> 4];
         const infoc = s.focus ? ((((st - s.focus[0]) % 64) + 64) % 64 < s.focus[1] ? 1 : 0.28) : 1;
@@ -172,7 +174,7 @@
           if (!h[v]) continue;
           const f = this.flash[st + ':' + v], e = f ? Math.max(0, 1 - (nowMs - f) / 420) : 0;
           const width = v === 'ride' || v === 'ghost' ? w : w * (0.55 + 0.45 * h[v]);
-          const base = (v === 'ride' ? 0.55 : v === 'ghost' ? 0.6 : 0.82) * ba * infoc * (1 - dim * 0.8) * (1 - sm * 0.82);
+          const base = (v === 'ride' ? 0.55 : v === 'ghost' ? 0.6 : 0.82) * ba * infoc * (1 - dim * 0.8) * (1 - sm * 0.82 * (1 - this.lk)) * (grooveDim && st >= 32 ? 1 - 0.78 * this.lk : 1);
           const col = COLORS[v];
           if (e > 0.02) arc(r, width * (1.5 + e * 0.8), st, col, e * 0.35, 0, 1);
           arc(r, width * (1 + e * 0.25), st, col, base + e * 0.35);
@@ -193,7 +195,7 @@
         g.beginPath(); g.arc(0, 0, R * (r + t * 0.1), ra, rb);
         g.lineWidth = Math.max(1, R * w * 0.25 * (1 - t)); g.strokeStyle = COLORS[rp.v]; g.globalAlpha = (1 - t) * 0.6 * rp.vel; g.stroke(); g.globalAlpha = 1;
       }
-      // the sample itself: its spectrum around the rim, and every hit it makes laid down where it happens
+      // the sample: its spectrum around the rim, and (when the clip really shows the break) a playhead locked to its tempo
       if (sv && sm > 0.02) {
         g.save(); g.globalAlpha = Math.min(1, sm);
         const spec = Amen.Preview.spectrum();
@@ -205,19 +207,10 @@
             g.stroke();
           });
         }
-        if (sv.marks) {
-          g.lineCap = 'butt';
-          [[0, 'kick', 0.5, 0.11], [1, 'snare', 0.72, 0.085], [2, 'ride', 0.875, 0.04]].forEach(([b, v, r, wd]) => {
-            g.beginPath(); g.strokeStyle = COLORS[v]; g.lineWidth = R * wd;
-            for (const m of sv.marks) {
-              if (m.t > sv.pos) break; if (m.b !== b) continue;
-              const a0 = ang((m.t / sv.dur) * 64); g.moveTo(Math.cos(a0) * R * r, Math.sin(a0) * R * r); g.arc(0, 0, R * r, a0, a0 + 0.007 + 0.011 * m.v);
-            }
-            g.globalAlpha = Math.min(1, sm) * 0.85; g.stroke(); g.globalAlpha = Math.min(1, sm);
-          });
+        if (sv.lock && sv.lockStep != null) {
+          const pa = ang(sv.lockStep); g.lineCap = 'round';
+          for (let i = 14; i >= 0; i--) { const aa = pa - i * 0.012; g.strokeStyle = 'rgba(255,255,255,' + (0.55 * (1 - i / 15)) + ')'; g.lineWidth = i === 0 ? 2.4 : 1.4; g.beginPath(); g.moveTo(Math.cos(aa) * R * 0.3, Math.sin(aa) * R * 0.3); g.lineTo(Math.cos(aa) * R * 1.05, Math.sin(aa) * R * 1.05); g.stroke(); }
         }
-        const pa = ang((sv.pos / sv.dur) * 64); g.lineCap = 'round';
-        for (let i = 14; i >= 0; i--) { const aa = pa - i * 0.012; g.strokeStyle = 'rgba(255,255,255,' + (0.55 * (1 - i / 15)) + ')'; g.lineWidth = i === 0 ? 2.4 : 1.4; g.beginPath(); g.moveTo(Math.cos(aa) * R * 0.3, Math.sin(aa) * R * 0.3); g.lineTo(Math.cos(aa) * R * 1.05, Math.sin(aa) * R * 1.05); g.stroke(); }
         g.restore();
       }
       // highlights
@@ -243,7 +236,7 @@
       g.fillStyle = 'rgba(7,7,11,0.92)'; g.beginPath(); g.arc(0, 0, cr, 0, TAU); g.fill();
       g.lineWidth = 2; g.strokeStyle = 'rgba(255,61,127,' + (0.35 + this.kickPulse * 0.65) + ')'; g.beginPath(); g.arc(0, 0, cr * (1 + this.kickPulse * 0.04), 0, TAU); g.stroke();
       g.fillStyle = '#f1ece0'; g.font = '900 ' + Math.max(14, R * 0.15) + 'px "Big Shoulders Display", Impact, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
-      const c0 = sv && sm > 0.5 ? fmt(sv.pos) : s.center[0], c1 = sv && sm > 0.5 ? 'THE CLIP' : s.center[1];
+      const c0 = sv && sm > 0.5 ? fmt(sv.pos) : s.center[0], c1 = sv && sm > 0.5 ? (sv.lock ? 'LOCKED \u00b7 ' + Math.round(sv.lock.bpm) + ' BPM' : sv.analyzed ? 'THE CLIP' : 'LISTENING\u2026') : s.center[1];
       g.fillText(c0, 0, R * 0.035);
       g.fillStyle = '#8b8a96'; g.font = '500 ' + Math.max(8, R * 0.045) + 'px "JetBrains Mono", ui-monospace, monospace';
       g.fillText(c1, 0, R * 0.115);
