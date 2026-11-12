@@ -24,7 +24,7 @@
       this.resize();
       if ('ResizeObserver' in window) new ResizeObserver(() => this.resize()).observe(canvas.parentElement || canvas);
       if ('IntersectionObserver' in window) new IntersectionObserver((e) => { this.visible = e[0].isIntersecting; }, { rootMargin: '100px' }).observe(canvas);
-      if (this.o.interactive) this.bindPointer();
+      if (this.o.interactive) { this.bindPointer(); this.bindKeys(); }
     }
     setLayout(fn) { this.layoutFn = fn; this.tgt = fn(this.w, this.h); if (!this.cur) this.cur = Object.assign({}, this.tgt); }
     set(p) { Object.assign(this.s, p); }
@@ -54,6 +54,21 @@
       cv.addEventListener('pointerleave', () => { this.hover = -1; down = false; });
       cv.addEventListener('pointerdown', (e) => { const s = this.stepAt(e); if (s >= 0) { down = true; this.doPick(s); } });
       window.addEventListener('pointerup', () => { down = false; });
+    }
+    /* ---------- keyboard: arrows walk the record, Enter/Space replays the slice */
+    bindKeys() {
+      const cv = this.cv; this.kb = 0; this.focused = false;
+      cv.tabIndex = 0; cv.setAttribute('role', 'group'); cv.setAttribute('aria-describedby', 'wheelHelp');
+      cv.addEventListener('focus', () => { this.focused = true; });
+      cv.addEventListener('blur', () => { this.focused = false; });
+      cv.addEventListener('keydown', (e) => {
+        const k = e.key; let d = 0;
+        if (k === 'ArrowRight' || k === 'ArrowDown') d = 1; else if (k === 'ArrowLeft' || k === 'ArrowUp') d = -1;
+        else if (k === 'PageDown') d = 16; else if (k === 'PageUp') d = -16;
+        else if (k === 'Home') d = -(this.kb % 16); else if (k === 'End') d = 15 - (this.kb % 16);
+        else if (k !== 'Enter' && k !== ' ') return;
+        e.preventDefault(); this.kb = (((this.kb + d) % 64) + 64) % 64; this.doPick(this.kb);
+      });
     }
     doPick(s) { this.pick = s; this.pickT = performance.now(); if (this.o.onPick) this.o.onPick(s, this); }
     describe(s) {
@@ -87,7 +102,7 @@
       this.kickPulse *= 0.9;
       g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
       g.clearRect(0, 0, this.w, this.h);
-      const R = this.cur.r, s = this.s, ph = Amen.playhead();
+      const R = this.cur.r, s = this.s, ph = this.o.static ? null : Amen.playhead();
       g.save(); g.translate(this.cur.cx, this.cur.cy);
 
       // disc + grooves
@@ -120,6 +135,10 @@
       const wedge = (a0, a1, fill) => { g.fillStyle = fill; g.beginPath(); g.arc(0, 0, R * 1.0, a0, a1); g.arc(0, 0, R * 0.3, a1, a0, true); g.closePath(); g.fill(); };
       if (this.hover >= 0) wedge(ang(this.hover), ang(this.hover + 1), 'rgba(255,255,255,0.07)');
       if (s.focus) wedge(ang(s.focus[0]), ang(s.focus[0] + s.focus[1]), 'rgba(255,255,255,0.09)');
+      if (this.focused) {
+        wedge(ang(this.kb), ang(this.kb + 1), 'rgba(255,255,255,0.2)');
+        g.strokeStyle = '#fff'; g.lineWidth = 2.5; g.beginPath(); g.arc(0, 0, R * 1.0, ang(this.kb), ang(this.kb + 1)); g.arc(0, 0, R * 0.3, ang(this.kb + 1), ang(this.kb), true); g.closePath(); g.stroke();
+      }
       if (this.pick >= 0 && nowMs - this.pickT < 700) wedge(ang(this.pick), ang(this.pick + 1), 'rgba(255,255,255,' + (0.2 * (1 - (nowMs - this.pickT) / 700)) + ')');
 
       // lanes

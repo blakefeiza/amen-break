@@ -9,6 +9,10 @@
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const ALL = { kick: 1, snare: 1, ghost: 1, ride: 1, crash: 1 };
   const apple = (t) => 'https://music.apple.com/us/search?term=' + encodeURIComponent(t.artist + ' ' + t.title);
+  const srEl = $('#sr'), gt = $('#gtoast');
+  const announce = (msg) => { srEl.textContent = ''; setTimeout(() => { srEl.textContent = msg; }, 30); };
+  const gtoast = (msg) => { gt.textContent = msg; gt.classList.add('show'); clearTimeout(gt._t); gt._t = setTimeout(() => gt.classList.remove('show'), 3200); };
+  let loopPaused = reduce;   // people who prefer reduced motion start with the loop paused
   const youtube = (t) => 'https://www.youtube.com/results?search_query=' + encodeURIComponent(t.artist + ' ' + t.title);
 
   /* =============================================================== sound state */
@@ -21,20 +25,27 @@
     startBtn.classList.toggle('on', soundOn); $('#startLabel').textContent = soundOn ? 'Sound on — now scroll' : 'Tap to hear it';
   }
   async function turnOn() {
-    try { await Amen.enable(); } catch (e) { console.warn(e); return false; }
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) { /* iOS: ignore the silent switch */ }
+    try { await Amen.enable(); } catch (e) { console.warn(e); gtoast('Sound isn\u2019t available in this browser. Everything still works silently.'); return false; }
     Amen.unmute(); soundOn = true; paintSound(); syncTransport(); return true;
   }
   function turnOff() { Amen.mute(); Amen.Preview.stopAll(); soundOn = false; paintSound(); }
   const ensureSound = async () => (soundOn ? true : turnOn());
   soundBtn.addEventListener('click', () => (soundOn ? turnOff() : turnOn()));
-  startBtn.addEventListener('click', async () => { if (!soundOn) { Amen.stop(); await turnOn(); Amen.start({ mode: 'full' }); } else turnOff(); });
+  startBtn.addEventListener('click', async () => { if (!soundOn) { loopPaused = false; paintPause(); Amen.stop(); await turnOn(); Amen.start({ mode: 'full' }); } else turnOff(); });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && Amen.ctx && Amen.ctx.state !== 'running' && soundOn) Amen.ctx.resume();
     if (document.hidden && labPlaying) stopLab();
   });
 
+  const pauseBtn = $('#pause');
+  function paintPause() { pauseBtn.setAttribute('aria-pressed', loopPaused); pauseBtn.setAttribute('aria-label', loopPaused ? 'Play the looping animation' : 'Pause the looping animation'); }
+  function setPaused(p) { loopPaused = p; paintPause(); if (p) { if (!labPlaying && Amen.T.playing) Amen.stop(); } else syncTransport(); announce(p ? 'Loop paused' : 'Loop playing'); }
+  pauseBtn.addEventListener('click', () => setPaused(!loopPaused));
+
   function syncTransport() {
     if (labPlaying) return;
+    if (loopPaused) { if (Amen.T.playing) Amen.stop(); return; }
     if (storyVisible) { if (!Amen.T.playing) Amen.start({ mode: 'full' }); } else if (Amen.T.playing) Amen.stop();
   }
 
@@ -62,6 +73,7 @@
   const W = '#ffffff';
   const SC = {
     hero: { layout: 'hero', bpm: 136, bar: [1, 1, 1, 1], center: (b) => [Math.round(b), 'BPM'] },
+    heard: { layout: 'side', bpm: 136, bar: [1, 1, 1, 1], center: () => ['LISTEN', 'FOR THE DRUMS'] },
     origin: { layout: 'side', bpm: 136, bar: [1, 1, 1, 1], center: () => ['1:26', 'THE BREAK'] },
     funk: { layout: 'side', bpm: 136, bar: [1, 1, 0.28, 0.28], center: () => ['BARS', '1 + 2'] },
     late: { layout: 'side', bpm: 136, bar: [0.25, 0.25, 1, 0.4], center: () => ['BAR', '3'], hl: [{ s: 46, v: 'snare', color: W }], ghosts: [{ s: 44, v: 'snare' }] },
@@ -118,9 +130,10 @@
   /* =============================================================== track lists + previews */
   function findTrack(key) { key = key.toLowerCase(); return TRACKS.find((t) => (t.artist + ' ' + t.title).toLowerCase().includes(key)); }
   $$('ul.tracks[data-tracks]').forEach((ul) => {
-    ul.innerHTML = ul.dataset.tracks.split('|').map(findTrack).filter(Boolean).map((t) => (
-      '<li><span class="yr">' + t.year + '</span><span class="tt">' + esc(t.title) + '<span class="aa">' + esc(t.artist) + '</span></span>' +
-      (t.itunesId ? '<button class="btn btn--sm" data-preview="' + t.itunesId + '" aria-label="Preview ' + esc(t.title) + '"><span class="play-ico"></span><span class="pv-label">30s</span></button>'
+    const subs = (ul.dataset.subs || '').split('|');
+    ul.innerHTML = ul.dataset.tracks.split('|').map((k, i) => { const t = findTrack(k); return t ? { t, sub: subs[i] } : null; }).filter(Boolean).map(({ t, sub }) => (
+      '<li><span class="yr">' + t.year + '</span><span class="tt">' + esc(t.title) + '<span class="aa">' + esc(t.artist) + (sub ? ' \u00b7 ' + esc(sub) : '') + '</span></span>' +
+      (t.itunesId ? '<button class="btn btn--sm" data-preview="' + t.itunesId + '" aria-label="Play 30-second preview of ' + esc(t.title) + ' by ' + esc(t.artist) + '"><span class="play-ico"></span><span class="pv-label">30s</span></button>'
         : '<a class="find" target="_blank" rel="noopener" href="' + apple(t) + '">find it &nearr;</a>') + '</li>'
     )).join('');
   });
@@ -142,7 +155,7 @@
 
   /* =============================================================== CHOP LAB */
   const wheel2 = new Wheel($('#wheel2'), {
-    onPick(s) { ensureSound().then(() => { if (!labPlaying) Amen.audition(s, 2, { allLayers: true, expected: false }); }); },
+    onPick(s) { announce(wheel2.describe(s).text); ensureSound().then(() => { if (!labPlaying) Amen.audition(s, 2, { allLayers: true, expected: false }); }); },
   });
   wheel2.setLayout((w, h) => ({ cx: w / 2, cy: h / 2, r: Math.min(w, h) * 0.44 }));
   wheel2.set({ center: ['136', 'BPM · CHOP'] });
@@ -173,9 +186,12 @@
   renderSlots();
   slotsEl.addEventListener('click', (e) => { const b = e.target.closest('[data-slot]'); if (!b) return; sel = +b.dataset.slot; renderSlots(); });
 
+  let padCount = 0;
   async function padPress(i) {
     await ensureSound();
-    seq[sel] = i; sel = (sel + 1) % 16; renderSlots(); Amen.T.seq = seq;
+    const was = sel; seq[sel] = i; sel = (sel + 1) % 16; renderSlots(); Amen.T.seq = seq;
+    announce('Slot ' + (was + 1) + ' set to bar ' + ((i >> 2) + 1) + ', beat ' + ((i & 3) + 1));
+    if (++padCount === 4) gtoast('You\u2019re re-cutting a 1969 drum break. This is how jungle was made.');
     const pad = padsEl.children[i]; pad.classList.add('is-hit'); setTimeout(() => pad.classList.remove('is-hit'), 130);
     if (!labPlaying) Amen.audition(i * 4, 4, { allLayers: true, expected: false });
   }
@@ -224,11 +240,71 @@
   new IntersectionObserver((es) => { labVisible = es[0].isIntersecting; if (!labVisible && labPlaying) stopLab(); }, { threshold: 0.12 }).observe($('#lab'));
 
   // share / restore
-  const toast = (m) => { const t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 2200); };
-  $('#share').addEventListener('click', async () => {
-    const url = location.origin + location.pathname + '#chop=' + seq.map((n) => n.toString(16)).join('') + '&bpm=' + labBpm;
-    try { await navigator.clipboard.writeText(url); toast('Link copied'); } catch (e) { location.hash = url.split('#')[1]; toast('Link is in the address bar'); }
-  });
+  const SHARE = { title: 'Seven Seconds: the drum break that built a genre', text: 'Four bars from 1969, borrowed by thousands of songs. Hear it, take it apart, chop your own.' };
+  const siteUrl = () => location.origin + location.pathname;
+  const chopUrl = () => siteUrl() + '#chop=' + seq.map((n) => n.toString(16)).join('') + '&bpm=' + labBpm;
+  const chopChanged = () => seq.some((n, i) => n !== i) || labBpm !== 136;
+  async function copyText(t) {
+    try { await navigator.clipboard.writeText(t); return true; } catch (e) {
+      const ta = document.createElement('textarea'); ta.value = t; ta.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(ta); ta.select();
+      let ok = false; try { ok = document.execCommand('copy'); } catch (_) { /* ignore */ } ta.remove(); return ok;
+    }
+  }
+  // a 1080x1350 picture of your chop, made on the fly
+  async function chopCard() {
+    if (document.fonts && document.fonts.ready) await document.fonts.ready;
+    const W = 1080, H = 1400, cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d');
+    g.fillStyle = '#07070b'; g.fillRect(0, 0, W, H);
+    const gl = g.createRadialGradient(540, 590, 60, 540, 590, 620); gl.addColorStop(0, 'rgba(255,61,127,.28)'); gl.addColorStop(1, 'rgba(255,61,127,0)'); g.fillStyle = gl; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#f1ece0'; g.textBaseline = 'alphabetic'; g.font = '900 118px "Big Shoulders Display", Impact, sans-serif'; g.fillText('MY AMEN CHOP', 64, 150);
+    g.fillStyle = '#a9a8b5'; g.font = '500 27px "JetBrains Mono", monospace'; g.fillText(labBpm + ' BPM  ·  4 BARS FROM 1969, RE-CUT', 68, 202);
+    const box = document.createElement('div'); box.style.cssText = 'position:fixed;left:-9999px;top:0;width:780px;height:780px'; const c = document.createElement('canvas'); box.appendChild(c); document.body.appendChild(box);
+    const w = new Wheel(c, { interactive: false, static: true }); w.visible = true; w.lastId = 1e15;
+    w.setLayout((ww, hh) => ({ cx: ww / 2, cy: hh / 2, r: Math.min(ww, hh) * 0.46 })); w.cur = Object.assign({}, w.tgt); w.set({ center: [String(labBpm), 'BPM · CHOP'] }); w.draw(performance.now());
+    g.drawImage(c, 150, 230, 780, 780); box.remove();
+    const cw = 112, ch = 104, gap = 10, x0 = (W - (8 * cw + 7 * gap)) / 2, y0 = 1034;
+    seq.forEach((p, i) => {
+      const x = x0 + (i % 8) * (cw + gap), y = y0 + Math.floor(i / 8) * (ch + gap), twist = p >> 2 >= 2;
+      g.fillStyle = 'rgba(255,255,255,.07)'; g.strokeStyle = 'rgba(255,255,255,.18)'; g.lineWidth = 2; g.beginPath(); g.roundRect(x, y, cw, ch, 12); g.fill(); g.stroke();
+      g.fillStyle = '#a9a8b5'; g.font = '400 18px "JetBrains Mono", monospace'; g.textAlign = 'left'; g.fillText(String(i + 1), x + 12, y + 26);
+      g.fillStyle = '#f1ece0'; g.font = '700 32px "JetBrains Mono", monospace'; g.textAlign = 'center'; g.fillText(((p >> 2) + 1) + '·' + ((p & 3) + 1), x + cw / 2, y + 76);
+      if (twist) { g.fillStyle = C.kick; g.beginPath(); g.arc(x + cw - 16, y + 18, 6, 0, 7); g.fill(); }
+    });
+    g.textAlign = 'left'; g.fillStyle = C.snare; g.font = '900 64px "Big Shoulders Display", Impact, sans-serif'; g.fillText('MAKE YOURS', 64, 1350);
+    g.fillStyle = '#a9a8b5'; g.font = '500 26px "JetBrains Mono", monospace'; g.textAlign = 'right'; g.fillText(siteUrl().replace(/^https?:\/\//, ''), W - 64, 1348);
+    return new Promise((res) => cv.toBlob(res, 'image/png'));
+  }
+  async function share(kind) {
+    if (kind === 'copy') { const ok = await copyText(chopChanged() ? chopUrl() : siteUrl()); gtoast(ok ? 'Link copied' : 'Copy the link from the address bar'); return; }
+    if (kind === 'site') {
+      if (navigator.share) { try { await navigator.share({ title: SHARE.title, text: SHARE.text, url: siteUrl() }); } catch (e) { /* dismissed */ } return; }
+      const ok = await copyText(siteUrl()); gtoast(ok ? 'Link copied. Send it to someone who’s heard these drums.' : 'Copy the link from the address bar'); return;
+    }
+    gtoast('Making your picture…');
+    const blob = await chopCard(); if (!blob) { gtoast('Couldn’t make the picture. The link still works.'); return copyText(chopUrl()); }
+    const file = new File([blob], 'my-amen-chop.png', { type: 'image/png' });
+    const data = { title: 'My Amen break chop', text: 'I re-cut a 1969 drum break. Make yours:', url: chopUrl(), files: [file] };
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share(data); return; } catch (e) { if (e.name === 'AbortError') return; } }
+    const u = URL.createObjectURL(blob), el = document.createElement('a'); el.href = u; el.download = 'my-amen-chop.png'; document.body.appendChild(el); el.click(); el.remove(); setTimeout(() => URL.revokeObjectURL(u), 4000);
+    const ok = await copyText(chopUrl()); gtoast(ok ? 'Picture saved and link copied' : 'Picture saved');
+  }
+  document.addEventListener('click', (e) => { const b = e.target.closest('[data-share]'); if (b) share(b.dataset.share); });
+  $('#shareTop').addEventListener('click', () => share('site'));
+
+  // the break as text (for screen readers, and for anyone curious how it's counted)
+  (function textAlt() {
+    const nm = (s) => ((s >> 2) + 1) + ['', ' e', ' &', ' a'][s & 3], list = (arr) => (arr.length ? arr.map(nm).join(', ') : 'none');
+    const eighths = [0, 2, 4, 6, 8, 10, 12, 14];
+    let rows = '';
+    Amen.BARS.forEach((b, i) => {
+      const miss = eighths.filter((s) => !b.ride.includes(s));
+      rows += '<tr><th scope="row">Bar ' + (i + 1) + '</th><td>' + list(b.kick.map((k) => k[0])) + '</td><td>' + list(b.snare.map((k) => k[0])) + '</td><td>' + list(b.ghost.map((k) => k[0])) + '</td><td>' +
+        (miss.length ? 'every eighth note except ' + list(miss) : 'every eighth note') + '</td><td>' + list(b.crash.map((k) => k[0])) + '</td></tr>';
+    });
+    $('#textalt').innerHTML = '<table><caption>Where each drum lands, as beat counts</caption><thead><tr><th scope="col">Bar</th><th scope="col">Kick</th><th scope="col">Snare</th><th scope="col">Ghost snares</th><th scope="col">Ride cymbal</th><th scope="col">Open cymbal</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<p class="small">Bars 3 and 4 push the second snare from beat 4 to the &ldquo;&amp;&rdquo; of 4, and bar 4 drops the kick on beat 1. That is the whole trick.</p>';
+  })();
+
   (function restore() {
     const m = /chop=([0-9a-f]{16})/.exec(location.hash), b = /bpm=(\d+)/.exec(location.hash);
     if (m) { setSeq(m[1].split('').map((c) => parseInt(c, 16))); if (b) setLabBpm(+b[1]); setTimeout(() => $('#lab').scrollIntoView(), 80); }
@@ -320,15 +396,17 @@
       d.el.classList.toggle('is-hidden', k > activeIdx); d.el.classList.toggle('is-sel', k === activeIdx);
       d.el.classList.toggle('is-dim', !!filter && d.t.bucket !== filter);
     });
-    rows.forEach((r, k) => { r.classList.toggle('is-active', k === activeIdx); r.classList.toggle('is-past', k < activeIdx); });
+    rows.forEach((r, k) => { r.classList.toggle('is-active', k === activeIdx); r.classList.toggle('is-past', k < activeIdx); r.setAttribute('aria-current', k === activeIdx ? 'true' : 'false'); });
     const t = order[activeIdx];
     sweepT = t ? rOf(t.year) : R0; sweepEl.setAttribute('stroke', t ? famOf(t.bucket).c : '#fff');
     $('#yearBig').textContent = t ? t.year : 1969;
     $('#countRead').textContent = (activeIdx + 1) + ' of ' + order.length;
   }
+  let announceT = 0;
   function setActive(i, quiet) {
     if (i === activeIdx) return; activeIdx = i; paintEcho();
     if (!quiet && i >= 0) Amen.ping(pingFreq(dots[i]), 0, 0.18, 0.045);
+    clearTimeout(announceT); announceT = setTimeout(() => { const t = order[activeIdx]; if (t) announce('Now at ' + t.year + ': ' + t.title + ' by ' + t.artist + '. ' + (activeIdx + 1) + ' of ' + order.length + '.'); }, 900);
   }
   function detect() {
     const y = refY(); let best = -1, bd = 1e9, first = -1;
@@ -385,6 +463,7 @@
   ['wheel', 'touchmove'].forEach((ev) => addEventListener(ev, () => { if (tour && performance.now() > lockUntil) stopTour(); }, { passive: true }));
 
   buildEcho(); buildList(); paintEcho();
+  listEl.addEventListener('focusin', (e) => { const r = e.target.closest('.erow'); if (r) { lockUntil = performance.now() + 700; setActive(+r.dataset.i, true); } });
   new IntersectionObserver((es) => { echoVisible = es[0].isIntersecting; if (!echoVisible) stopTour(); else echoDirty = true; }, { threshold: 0 }).observe($('#echoScrolly'));
   addEventListener('scroll', () => { echoDirty = true; }, { passive: true }); addEventListener('resize', () => { echoDirty = true; });
 
@@ -402,7 +481,7 @@
     wheel.s.center = SC[scene].center(storyBpm);
     wheel.draw(t);
     if (storyVisible && wheel.cur) {
-      document.documentElement.style.setProperty('--pulse', wheel.kickPulse.toFixed(3));
+      document.documentElement.style.setProperty('--pulse', reduce ? 0 : wheel.kickPulse.toFixed(3));
       stage.style.setProperty('--gx', wheel.cur.cx + 'px'); stage.style.setProperty('--gy', wheel.cur.cy + 'px');
     }
     if (echoVisible) {
@@ -413,9 +492,9 @@
     requestAnimationFrame(frame);
   }
   applyScene('hero'); paintSound(); paintLab(); setLabBpm(labBpm);
-  Amen.start({ mode: 'full' }); // silent, visual-only until the listener opts in
+  paintPause(); if (!loopPaused) Amen.start({ mode: 'full' }); // silent, visual-only until the listener opts in
   requestAnimationFrame(frame);
   // let fonts settle, then redraw canvases at the right size
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { wheel.resize(); wheel2.resize(); });
-  window.__amen = { wheel, wheel2, applyScene, get seq() { return seq; } }; // handy for debugging in the console
+  window.__amen = { wheel, wheel2, applyScene, chopCard, share, get seq() { return seq; } }; // handy for debugging in the console
 })();

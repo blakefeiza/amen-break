@@ -1,0 +1,26 @@
+<!doctype html><html><head><meta charset="utf-8"><title>og</title>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;width:1200px;height:630px;background:#07070b;overflow:hidden;color:#f1ece0}
+.glow{position:absolute;inset:0;background:radial-gradient(circle at 880px 315px,rgba(255,61,127,.30),rgba(45,226,255,.06) 40%,transparent 62%)}
+#box{position:absolute;left:560px;top:20px;width:590px;height:590px}
+.t{position:absolute;left:64px;top:118px;font:900 150px/.82 "Big Shoulders Display",Impact,sans-serif;text-transform:uppercase}
+.t span{color:transparent;-webkit-text-stroke:3px #f1ece0}
+.k{position:absolute;left:68px;top:52px;font:700 20px "JetBrains Mono",monospace;letter-spacing:.2em;text-transform:uppercase;color:#c8ff00}
+.s{position:absolute;left:68px;top:420px;width:480px;font:500 25px/1.4 "Space Grotesk",system-ui,sans-serif;color:#dcd7ca}
+.u{position:absolute;left:68px;bottom:34px;font:700 20px "JetBrains Mono",monospace;letter-spacing:.12em;text-transform:uppercase;color:#a9a8b5}
+</style></head><body>
+<div class="glow"></div><p class="k">A data story in four bars</p>
+<div class="t">Seven<br><span>seconds</span></div>
+<p class="s">A drum break from 1969 that built hip-hop, jungle and pop. Hear it, chop your own.</p>
+<p class="u">blakefeiza.github.io/amen-break</p>
+<div id="box"><canvas id="c"></canvas></div>
+<script src="../engine.js"></script><script src="../wheel.js"></script>
+<script>
+document.fonts.ready.then(()=>{
+  const w=new Wheel(document.getElementById('c'),{interactive:false});
+  w.visible=true; w.lastId=1e15;
+  w.setLayout((ww,hh)=>({cx:ww/2,cy:hh/2,r:Math.min(ww,hh)*0.46})); w.cur=Object.assign({},w.tgt);
+  w.set({center:['136','BPM']}); setInterval(()=>w.draw(performance.now()),50);
+});
+</script></body></html>
