@@ -1,4 +1,4 @@
-"""Download each track's 30-second Apple preview into audio/<id>.m4a so the page can serve it from its own origin."""
+"""Download each track's 30-second Apple preview into audio/<id>.mp3 so the page can serve it from its own origin."""
 import json, pathlib, urllib.request
 root = pathlib.Path(__file__).resolve().parent.parent
 tracks = json.loads((root / 'tracks.js').read_text().split('=', 1)[1].rstrip().rstrip(';'))
@@ -13,6 +13,6 @@ for country in ('us', 'gb'):
 (root / 'audio').mkdir(exist_ok=True)
 ok = []
 for i, u in urls.items():
-    d = urllib.request.urlopen(u).read(); (root / 'audio' / (i + '.m4a')).write_bytes(d); ok.append(int(i))
+    d = urllib.request.urlopen(u).read(); (root / 'audio' / (i + ".mp3")).write_bytes(d); ok.append(int(i))
 (root / 'audio.js').write_text('window.AMEN_AUDIO = ' + json.dumps(sorted(ok)) + ';\n')
 print(len(ok), 'of', len(ids), 'saved; missing:', [i for i in ids if i not in urls])

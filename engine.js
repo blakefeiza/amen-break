@@ -396,7 +396,7 @@
       }
       saveUrls();
     }
-    const LOCAL = new Set((window.AMEN_AUDIO || []).map(String)), localUrl = (id) => 'audio/' + id + '.m4a';
+    const LOCAL = new Set((window.AMEN_AUDIO || []).map(String)), localUrl = (id) => 'audio/' + id + '.mp3';
     const getUrl = (id) => (LOCAL.has(String(id)) ? Promise.resolve(localUrl(id)) : urlMap[id] ? Promise.resolve(urlMap[id]) : once('u' + id, async () => { await lookup([id]); if (!urlMap[id]) throw new Error('no preview'); return urlMap[id]; }));
     const lookupUrl = (id) => (urlMap[id] ? Promise.resolve(urlMap[id]) : once('u' + id, async () => { await lookup([id]); if (!urlMap[id]) throw new Error('no preview'); return urlMap[id]; }));
     const getRaw = (id) => (raw.has(id) ? Promise.resolve(raw.get(id)) : once('r' + id, async () => {
@@ -482,7 +482,7 @@
     el.addEventListener('ended', () => { if (legacyOn) stopNow(); });
     async function legacyPlay(id, opts) {
       try { el.src = await getUrl(id); el.volume = pvl(); legacyOn = true; current = id; setDuck(true, opts && opts.fade ? 0.5 : 0.03); await el.play(); emit(id, 'playing'); }
-      catch (err) { legacyOn = false; current = null; setDuck(false); emit(id, 'error'); }
+      catch (err) { legacyOn = false; current = null; setDuck(false); window.AMEN_ERR = (window.AMEN_ERR || '') + ' | play: ' + (err && err.name || err); emit(id, 'error'); }
     }
     async function toggle(id, opts) {
       id = String(id);
@@ -496,7 +496,7 @@
         const buf = await getBuf(id); await resumed;
         if (loading !== id || my !== token) return;
         loading = null; start(id, buf, opts);
-      } catch (err) { if (loading !== id || my !== token) return; loading = null; await legacyPlay(id, opts); }
+      } catch (err) { if (loading !== id || my !== token) return; loading = null; window.AMEN_ERR = 'load: ' + (err && err.message || err); await legacyPlay(id, opts); }
     }
     const auto = async (id) => { id = String(id); if (current === id || loading === id) return; await toggle(id, { fade: true }); };
     function fadeStop(ms) {

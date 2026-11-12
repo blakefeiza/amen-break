@@ -233,7 +233,7 @@
       b.classList.toggle('is-playing', state === 'playing'); b.classList.toggle('is-loading', state === 'loading'); const tile = b.closest('.tile'); if (tile) tile.classList.toggle('is-playing', state === 'playing');
       const l = $('.pv-label', b); if (!l) return;
       if (!l.dataset.orig) l.dataset.orig = l.textContent;
-      l.textContent = state === 'error' ? 'Unavailable' : state === 'playing' ? 'Playing…' : l.dataset.orig;
+      if (state === 'error') b.title = window.AMEN_ERR || ''; l.textContent = state === 'error' ? 'Unavailable' : state === 'playing' ? 'Playing…' : l.dataset.orig;
       if (state === 'error') setTimeout(() => (l.textContent = l.dataset.orig), 2200);
     });
   });
