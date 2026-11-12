@@ -67,8 +67,8 @@ canvas:focus-visible { outline-offset: -3px; border-radius: 12px; }
 .caption { position: absolute; margin: 0; transform: translateX(-50%); font: 500 11.5px var(--mono); letter-spacing: .06em; color: var(--paper); background: rgba(7, 7, 11, .78); border: 1px solid var(--line); padding: 6px 12px; border-radius: 999px; white-space: nowrap; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 3; }
 .caption.show { opacity: 1; }
 .steps { position: relative; z-index: 2; margin-top: -100vh; margin-top: -100svh; pointer-events: none; }
-.step { min-height: 100vh; min-height: 100svh; display: flex; align-items: flex-end; justify-content: center; padding: 0 12px 14px; }
-.card { --fg: #0b0b10; --fg2: #5a5864; --rule: rgba(11, 11, 16, .2); pointer-events: auto; width: 100%; max-width: 560px; max-height: 58svh; overflow: auto; padding: 14px 20px 18px; border-radius: 3px; background: var(--paper); color: var(--fg); box-shadow: 0 30px 80px rgba(0, 0, 0, .65); overscroll-behavior: contain; }
+.step { min-height: 100vh; min-height: 100svh; display: flex; align-items: flex-end; justify-content: center; padding: 0 16px max(18px, env(safe-area-inset-bottom)); }
+.card { --fg: #0b0b10; --fg2: #5a5864; --rule: rgba(11, 11, 16, .2); pointer-events: auto; width: 100%; max-width: 560px; max-height: 74svh; overflow: auto; padding: 14px 22px 22px; border-radius: 3px; background: var(--paper); color: var(--fg); box-shadow: 0 30px 80px rgba(0, 0, 0, .65); overscroll-behavior: contain; }
 .cat { display: flex; justify-content: space-between; font: 600 11.5px var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--fg); padding-bottom: 8px; margin-bottom: 14px; border-bottom: 2px solid var(--fg); }
 .cat span:last-child { color: var(--fg2); }
 .card .kicker { display: inline-block; color: var(--fg); border: 1.5px solid var(--fg); padding: 3px 9px; margin: 0 0 12px; }
@@ -228,3 +228,47 @@ input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 
 .iconbtn.nudge { border-color: var(--snare); color: var(--snare); animation: halo 1.6s infinite; }
 .iconbtn[aria-expanded="true"] { border-color: var(--snare); color: var(--snare); }
 @media (max-width: 430px) { .hide-sm { display: none; } .sound { padding: 8px 12px; gap: 8px; } .hud-r { gap: 6px; } }
+
+/* ---------- hiding in plain sight */
+.plain { position: relative; z-index: 3; background: radial-gradient(90% 60% at 100% 0%, rgba(45, 226, 255, .08), transparent 60%), var(--ink); padding: 84px 0 70px; border-top: 1px solid var(--line); }
+.tiles { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 14px; grid-template-columns: 1fr; }
+.tile { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 18px 18px 16px; border: 1px solid var(--line); border-radius: 4px; background: rgba(255, 255, 255, .03); color: var(--paper); transition: background .25s, color .25s, border-color .25s; }
+.tile-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.tile-tag { font: 700 11.5px var(--mono); letter-spacing: .14em; text-transform: uppercase; border: 1.5px solid currentColor; padding: 3px 9px; }
+.tile { --tile-fg: var(--paper); } .tile.is-playing { --tile-fg: #0b0b10; }
+.tile-year { font: 900 44px/.85 var(--display); color: transparent; -webkit-text-stroke: 1.2px var(--tile-fg); }
+.tile h3 { margin: 6px 0 0; font: 800 clamp(26px, 6vw, 34px)/.95 var(--display); text-transform: uppercase; }
+.tile-by { margin: 0; font-size: 14px; opacity: .82; }
+.tile-line { margin: 4px 0 8px; font-size: 15px; line-height: 1.45; max-width: 46ch; }
+.tile .btn { align-self: flex-start; justify-self: start; margin-top: auto; }
+.tile .tile-eq { display: none; }
+.tile.is-playing { background: var(--paper); color: #0b0b10; border-color: var(--paper); }
+.tile.is-playing .btn { border-color: #0b0b10; color: #c40d45; }
+.tile.is-playing :focus-visible { outline-color: #0b0b10; }
+.tile.is-playing .tile-eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; margin-right: auto; margin-left: 10px; }
+.tile-eq i { width: 3px; height: 4px; background: currentColor; animation: eq .9s ease-in-out infinite; } .tile-eq i:nth-child(2) { animation-delay: -.3s; } .tile-eq i:nth-child(3) { animation-delay: -.6s; }
+.tile--hero h3 { font-size: clamp(40px, 10vw, 76px); }
+.tile--hero .tile-year { font-size: clamp(64px, 16vw, 130px); }
+.tile--hero .tile-line { font-size: 17px; }
+@media (min-width: 760px) { .tiles { grid-template-columns: repeat(2, 1fr); } .tile--hero { grid-column: 1 / -1; } }
+@media (min-width: 1100px) { .tiles { grid-template-columns: repeat(3, 1fr); } .plain { padding: 130px 0 110px; } .tile--hero { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 40px; padding: 28px 32px; } .tile--hero .tile-top { grid-column: 2; grid-row: 1 / span 5; flex-direction: column; align-items: flex-end; justify-content: space-between; } .tile--hero > :not(.tile-top) { grid-column: 1; } }
+
+.card .stat { display: flex; align-items: center; gap: 12px; margin: 12px 0 6px; padding: 10px 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.card .stat b { font: 900 46px/.8 var(--display); color: var(--fg); letter-spacing: 0; }
+.card .stat span { font: 600 12px/1.35 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--fg); }
+.card .more { margin-top: 8px; } .card .more summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font: 600 11.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--fg2); } .card .more p.note { margin-top: 0; }
+
+/* ---------- compact cards on phones: nothing clipped, record stays in view */
+@media (max-width: 859px) {
+  .card { padding: 12px 20px 18px; }
+  .cat { padding-bottom: 6px; margin-bottom: 10px; }
+  .card .kicker { margin-bottom: 8px; padding: 2px 8px; }
+  .card h2 { margin-bottom: 8px; }
+  .card p { margin-bottom: 6px; }
+  .card .stat { margin: 8px 0 4px; padding: 8px 0; } .card .stat b { font-size: 40px; }
+  .card .listen { margin: 8px 0 2px; padding: 8px 10px; }
+  .facts { margin: 10px 0 2px; } .facts b { font-size: 24px; }
+  .card .row { margin-top: 10px; gap: 8px; } .card .row .btn { padding: 10px 14px; letter-spacing: .05em; }
+  .card .tracks li { padding: 5px 0; }
+  .card .more { margin-top: 4px; }
+}

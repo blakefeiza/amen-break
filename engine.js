@@ -253,7 +253,11 @@
 
   /* ------------------------------------------------------------------ 30-second previews (Apple iTunes Search API) */
   const Preview = (function () {
-    const el = new Audio(); el.preload = 'none'; let fadeMul = 1, fadeRaf = 0; const applyEl = () => { el.volume = Math.max(0, Math.min(1, pvl() * fadeMul)); }; applyEl();
+    const el = new Audio(); el.preload = 'none'; el.crossOrigin = 'anonymous';
+    let fadeMul = 1, fadeRaf = 0, pg = null;   // pg: gain node once the element is routed through Web Audio (volume then works on iOS too)
+    const applyEl = () => { const v = Math.max(0, Math.min(1, pvl() * fadeMul)); if (pg) { pg.gain.value = v; el.volume = 1; } else el.volume = v; };
+    const route = () => { if (pg || !ctx) return; try { const s = ctx.createMediaElementSource(el); pg = ctx.createGain(); s.connect(pg); pg.connect(ctx.destination); } catch (err) { pg = null; } applyEl(); };
+    applyEl();
     let current = null; const cache = {};
     const emit = (id, state) => document.dispatchEvent(new CustomEvent('amen:preview', { detail: { id: String(id), state } }));
     el.addEventListener('ended', () => { const id = current; current = null; if (id) emit(id, 'idle'); setDuck(false, 0.3); });
@@ -280,7 +284,8 @@
       if (loading) emit(loading, 'idle');
       loading = id; emit(id, 'loading');
       try {
-        if (ctx) { try { await ctx.resume(); } catch (e) { /* ignore */ } }
+        ensureCtx(); try { await ctx.resume(); } catch (err) { /* ignore */ }
+        route();
         const u = await urlFor(id); if (loading !== id) return;
         el.src = u; current = id; loading = null;
         setDuck(true, opts && opts.fade ? 0.5 : 0.03); await el.play(); emit(id, 'playing');
@@ -308,9 +313,9 @@
       setDuck(false, 0.35);
       fadeTo(0, ms || 900, () => { if (current) el.pause(); fadeMul = 1; applyEl(); });
     }
-    function volumeLocked() { const old = el.volume; el.volume = old > 0.5 ? 0.25 : 0.75; const locked = Math.abs(el.volume - (old > 0.5 ? 0.25 : 0.75)) > 0.001; el.volume = old; return locked; }
+    function volumeLocked() { if (pg) return false; const old = el.volume; el.volume = old > 0.5 ? 0.25 : 0.75; const locked = Math.abs(el.volume - (old > 0.5 ? 0.25 : 0.75)) > 0.001; el.volume = old; return locked; }
     function stopAll() { cancelAnimationFrame(fadeRaf); fadeMul = 1; applyEl(); if (loading) { const l = loading; loading = null; emit(l, 'idle'); } if (current) el.pause(); }
-    return { toggle, auto, fadeStop, stopAll, setVolume, volumeLocked, get current() { return current; } };
+    return { toggle, auto, fadeStop, stopAll, setVolume, volumeLocked, get current() { return current; }, get level() { return pg ? pg.gain.value : el.volume; }, get routed() { return !!pg; } };
   })();
 
   window.Amen = {

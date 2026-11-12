@@ -42,7 +42,7 @@
   let volTouched = false;
   function openVol(open, auto) {
     volPanel.hidden = !open; volBtn.setAttribute('aria-expanded', open); clearTimeout(volIdle);
-    if (open) { $('#volNote').hidden = !Amen.Preview.volumeLocked(); if (auto) volIdle = setTimeout(() => openVol(false), 8000); }
+    if (open) { $('#volNote').hidden = true; if (auto) volIdle = setTimeout(() => openVol(false), 8000); }
     if (!open) volBtn.classList.remove('nudge');
   }
   function nudgeVolume() {
@@ -89,7 +89,7 @@
     hero: (w, h) => (w < 860 ? { cx: w / 2, cy: h * 0.5, r: Math.min(w * 0.36, h * 0.2) } : { cx: w / 2, cy: h * 0.52, r: Math.min(h * 0.235, w * 0.22) }),
     side: (w, h) => {
       if (w < 860) { // keep the whole record visible above the card
-        const top = 62, bottom = Math.max(top + 150, h - cardH - 26), r = Math.min(w * 0.42, (bottom - top) / 2);
+        const top = 62, bottom = Math.max(top + 150, h - cardH - 36), r = Math.min(w * 0.42, (bottom - top) / 2);
         return { cx: w / 2, cy: top + (bottom - top) / 2, r };
       }
       const avail = w * 0.91 - 470; // room left of the 440px card
@@ -109,6 +109,9 @@
     djs: { layout: 'side', bpm: 96, bar: [1, 1, 1, 1], center: (b) => [Math.round(b), 'BPM · SLOWED'] },
     escape: { layout: 'side', bpm: 104, bar: [1, 1, 1, 1], center: (b) => [Math.round(b), 'BPM · 1988'] },
     jungle: { layout: 'side', bpm: 168, bar: [1, 1, 1, 1], center: (b) => [Math.round(b), 'BPM · SPED UP'] },
+    mainstream: { layout: 'side', bpm: 136, bar: [1, 1, 1, 1], center: () => ['1997', 'GOES MAINSTREAM'] },
+    digital: { layout: 'side', bpm: 140, bar: [1, 1, 1, 1], center: () => ['2004', 'EVERYONE\u2019S FIRST CHOP'] },
+    today: { layout: 'side', bpm: 150, bar: [1, 1, 1, 1], center: () => ['NOW', 'STILL GOING'] },
   };
   let scene = 'hero', ab = 'real', storyBpm = 136, cardH = 300;
 
@@ -125,7 +128,7 @@
     scheduleAuto(name, 900);
   }
   /* ---- featured track: when a section with a track arrives and sound is on, fade it in over the loop */
-  const AUTO = { heard: 'Futurama', djs: 'Bust That Groove', escape: 'Straight Outta Compton', jungle: 'Demon' };
+  const AUTO = { heard: 'Little Wonder', djs: 'Bust That Groove', escape: 'Straight Outta Compton', jungle: 'Demon', mainstream: 'Slip Inside', digital: 'Aaron 2', today: 'The Real' };
   const autoSkip = new Set();     // sections where the listener pressed pause: leave them alone
   let autoT = 0, autoId = null, autoScene = null;
   function scheduleAuto(name, delay) {
@@ -168,11 +171,11 @@
 
   // record-sleeve catalog line on each card: Side A = the break, Side B = its afterlife
   (function cat() {
-    const steps = $$('.step[data-scene]').filter((s) => s.dataset.scene !== 'hero'), side = { djs: 1, escape: 1, jungle: 1 };
+    const steps = $$('.step[data-scene]').filter((s) => s.dataset.scene !== 'hero'), side = { djs: 'B', escape: 'B', jungle: 'B', mainstream: 'C', digital: 'C', today: 'C' };
     steps.forEach((s, i) => {
       const card = $('.card', s); if (!card) return;
       const el = document.createElement('div'); el.className = 'cat';
-      el.innerHTML = '<span>Side ' + (side[s.dataset.scene] ? 'B' : 'A') + '</span><span>' + String(i + 1).padStart(2, '0') + ' / ' + String(steps.length).padStart(2, '0') + '</span>';
+      el.innerHTML = '<span>Side ' + (side[s.dataset.scene] || 'A') + '</span><span>' + String(i + 1).padStart(2, '0') + ' / ' + String(steps.length).padStart(2, '0') + '</span>';
       card.insertBefore(el, card.firstChild);
     });
   })();
@@ -187,6 +190,23 @@
         : '<a class="find" target="_blank" rel="noopener" href="' + apple(t) + '">find it &nearr;</a>') + '</li>'
     )).join('');
   });
+  // "Wait, that has it?" tiles: every claim below is from Wikipedia or MusicBrainz
+  const TILES = [
+    { key: 'futurama', tag: 'A cartoon', hero: true, line: 'The opening theme of Futurama is built on it. A later remix of the theme swapped the break for newly recorded drums.' },
+    { key: 'crystalline', tag: 'Art-pop', line: 'Björk’s song ends in a drum & bass section that uses the break.' },
+    { key: 'jackie (b', tag: 'R&B', line: 'Yes, even here. The track samples “Amen, Brother.”' },
+    { key: 'untitled 05', tag: 'Rap', line: 'A downtempo, jazz-flavored Kendrick Lamar track with the break underneath.' },
+    { key: 'no money', tag: 'Radio dance hit', line: 'A big Galantis hit. The break lands most clearly at 1:44, past the end of the 30-second preview.' },
+    { key: 'second 2 none', tag: 'Indie electronic', line: 'Mura Masa and Christine and the Queens sample it.' },
+    { key: 'the game compton', tag: 'West Coast rap', line: 'The same break N.W.A used on “Straight Outta Compton,” rediscovered in 2006.' },
+    { key: 'digital circuit', tag: 'Game composer', line: 'From the composer best known for the Sonic the Hedgehog games. MusicBrainz lists it as sampling the break.' },
+  ];
+  $('#tiles').innerHTML = TILES.map((d) => {
+    const t = findTrack(d.key); if (!t || !t.itunesId) return '';
+    return '<li class="tile' + (d.hero ? ' tile--hero' : '') + '"><div class="tile-top"><span class="tile-tag">' + esc(d.tag) + '</span><span class="tile-eq" aria-hidden="true"><i></i><i></i><i></i></span><span class="tile-year" aria-label="' + t.year + '">' + t.year + '</span></div>' +
+      '<h3>' + esc(t.title.replace(/ Original Series Theme \(TV version\)/, ' theme')) + '</h3><p class="tile-by">' + esc(t.artist) + '</p><p class="tile-line">' + esc(d.line) + '</p>' +
+      '<button class="btn btn--sm" data-preview="' + t.itunesId + '" aria-label="Play 30-second preview of ' + esc(t.title) + ' by ' + esc(t.artist) + '"><span class="play-ico"></span><span class="pv-label">Listen</span></button></li>';
+  }).join('');
   document.addEventListener('click', (e) => {
     const b = e.target.closest('[data-preview]'); if (!b) return;
     if (autoId && b.dataset.preview === autoId && Amen.Preview.current === autoId) autoSkip.add(autoScene);   // they paused it: no more autoplay here
@@ -197,7 +217,7 @@
   document.addEventListener('amen:preview', (e) => {
     const { id, state } = e.detail;
     $$('[data-preview="' + id + '"]').forEach((b) => {
-      b.classList.toggle('is-playing', state === 'playing'); b.classList.toggle('is-loading', state === 'loading');
+      b.classList.toggle('is-playing', state === 'playing'); b.classList.toggle('is-loading', state === 'loading'); const tile = b.closest('.tile'); if (tile) tile.classList.toggle('is-playing', state === 'playing');
       const l = $('.pv-label', b); if (!l) return;
       if (!l.dataset.orig) l.dataset.orig = l.textContent;
       l.textContent = state === 'error' ? 'Unavailable' : state === 'playing' ? 'Playing…' : l.dataset.orig;
@@ -292,7 +312,7 @@
   new IntersectionObserver((es) => { labVisible = es[0].isIntersecting; if (!labVisible && labPlaying) stopLab(); }, { threshold: 0.12 }).observe($('#lab'));
 
   // share / restore
-  const SHARE = { title: 'Seven Seconds: the drum break that built a genre', text: 'Four bars from 1969, borrowed by thousands of songs. Hear it, take it apart, chop your own.' };
+  const SHARE = { title: 'Seven Seconds: the drum break that built a genre', text: 'The most sampled drum break in music history: four bars from 1969, hiding in thousands of songs. Hear it, take it apart, chop your own.' };
   const siteUrl = () => location.origin + location.pathname;
   const chopUrl = () => siteUrl() + '#chop=' + seq.map((n) => n.toString(16)).join('') + '&bpm=' + labBpm;
   const chopChanged = () => seq.some((n, i) => n !== i) || labBpm !== 136;
