@@ -8,6 +8,7 @@
   const ang = (s) => -Math.PI / 2 + (s / 64) * TAU;
   const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   const BEATS = ['', 'e', '&', 'a'];
+  const fmt = (t) => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
 
   class Wheel {
     constructor(canvas, opts) {
@@ -20,7 +21,7 @@
       this.layoutFn = (w, h) => ({ cx: w / 2, cy: h / 2, r: Math.min(w, h) * 0.42 });
       this.cur = null; this.tgt = null;
       this.ripples = []; this.lastId = 0; this.flash = {}; this.visible = true; this.hover = -1; this.pick = -1; this.pickT = 0;
-      this.kickPulse = 0; this.t0 = performance.now(); this.w = 0; this.h = 0; this.dpr = 1;
+      this.kickPulse = 0; this.sm = 0; this.t0 = performance.now(); this.w = 0; this.h = 0; this.dpr = 1;
       this.resize();
       if ('ResizeObserver' in window) new ResizeObserver(() => this.resize()).observe(canvas.parentElement || canvas);
       if ('IntersectionObserver' in window) new IntersectionObserver((e) => { this.visible = e[0].isIntersecting; }, { rootMargin: '100px' }).observe(canvas);
@@ -80,6 +81,7 @@
     }
     /* ---------- drawing */
     consume() {
+      if (this.o.sample !== false && !this.o.static && this.sm > 0.3) { for (const e of Amen.eventsSince(this.lastId)) this.lastId = e.id; return; }   // the drum loop sits quietly behind a sample
       const evs = Amen.eventsSince(this.lastId);
       const nowMs = performance.now();
       for (const e of evs) {
@@ -98,11 +100,14 @@
       if (!this.visible || !this.cur) return;
       const g = this.g, k = reduce ? 1 : 0.1;
       for (const key of ['cx', 'cy', 'r']) this.cur[key] += (this.tgt[key] - this.cur[key]) * k;
+      const useS = this.o.sample !== false && !this.o.static, sv = useS ? Amen.Preview.lastView : null;
+      this.sm += ((sv ? 1 : 0) - this.sm) * (reduce ? 1 : 0.14); const sm = this.sm;
       this.consume();
+      if (sv) for (const m of Amen.Preview.fx) { this.ripples.push({ a: ang((m.t / sv.dur) * 64), v: m.b === 0 ? 'kick' : m.b === 1 ? 'snare' : 'ride', t: nowMs, vel: m.v }); if (m.b === 0) this.kickPulse = 1; }
       this.kickPulse *= 0.9;
       g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
       g.clearRect(0, 0, this.w, this.h);
-      const R = this.cur.r, s = this.s, ph = this.o.static ? null : Amen.playhead();
+      const R = this.cur.r, s = this.s, ph = this.o.static || sv ? null : Amen.playhead();
       g.save(); g.translate(this.cur.cx, this.cur.cy);
 
       // disc + grooves
@@ -167,7 +172,7 @@
           if (!h[v]) continue;
           const f = this.flash[st + ':' + v], e = f ? Math.max(0, 1 - (nowMs - f) / 420) : 0;
           const width = v === 'ride' || v === 'ghost' ? w : w * (0.55 + 0.45 * h[v]);
-          const base = (v === 'ride' ? 0.55 : v === 'ghost' ? 0.6 : 0.82) * ba * infoc * (1 - dim * 0.8);
+          const base = (v === 'ride' ? 0.55 : v === 'ghost' ? 0.6 : 0.82) * ba * infoc * (1 - dim * 0.8) * (1 - sm * 0.82);
           const col = COLORS[v];
           if (e > 0.02) arc(r, width * (1.5 + e * 0.8), st, col, e * 0.35, 0, 1);
           arc(r, width * (1 + e * 0.25), st, col, base + e * 0.35);
@@ -184,8 +189,36 @@
         const rp = this.ripples[i], t = (nowMs - rp.t) / 520;
         if (t >= 1) { this.ripples.splice(i, 1); continue; }
         const [r, w] = lanes[rp.v];
-        g.beginPath(); g.arc(0, 0, R * (r + t * 0.1), ang(rp.s) - DA * t * 0.5, ang(rp.s) + DA * (1 + t * 0.5));
+        const ra = rp.a != null ? rp.a - DA * (0.6 + t * 0.5) : ang(rp.s) - DA * t * 0.5, rb = rp.a != null ? rp.a + DA * (0.6 + t * 0.5) : ang(rp.s) + DA * (1 + t * 0.5);
+        g.beginPath(); g.arc(0, 0, R * (r + t * 0.1), ra, rb);
         g.lineWidth = Math.max(1, R * w * 0.25 * (1 - t)); g.strokeStyle = COLORS[rp.v]; g.globalAlpha = (1 - t) * 0.6 * rp.vel; g.stroke(); g.globalAlpha = 1;
+      }
+      // the sample itself: its spectrum around the rim, and every hit it makes laid down where it happens
+      if (sv && sm > 0.02) {
+        g.save(); g.globalAlpha = Math.min(1, sm);
+        const spec = Amen.Preview.spectrum();
+        if (spec) {
+          g.lineCap = 'round';
+          [[0, 21, COLORS.kick], [21, 43, COLORS.snare], [43, 64, COLORS.ride]].forEach(([a, b, col]) => {
+            g.beginPath(); g.strokeStyle = col; g.lineWidth = Math.max(2, R * 0.022);
+            for (let i = a; i < b; i++) { const aa = ang(i + 0.5), m = Math.pow(spec[i], 1.15), r0 = R * 1.05, r1 = r0 + R * (0.015 + 0.17 * m); g.moveTo(Math.cos(aa) * r0, Math.sin(aa) * r0); g.lineTo(Math.cos(aa) * r1, Math.sin(aa) * r1); }
+            g.stroke();
+          });
+        }
+        if (sv.marks) {
+          g.lineCap = 'butt';
+          [[0, 'kick', 0.5, 0.11], [1, 'snare', 0.72, 0.085], [2, 'ride', 0.875, 0.04]].forEach(([b, v, r, wd]) => {
+            g.beginPath(); g.strokeStyle = COLORS[v]; g.lineWidth = R * wd;
+            for (const m of sv.marks) {
+              if (m.t > sv.pos) break; if (m.b !== b) continue;
+              const a0 = ang((m.t / sv.dur) * 64); g.moveTo(Math.cos(a0) * R * r, Math.sin(a0) * R * r); g.arc(0, 0, R * r, a0, a0 + 0.007 + 0.011 * m.v);
+            }
+            g.globalAlpha = Math.min(1, sm) * 0.85; g.stroke(); g.globalAlpha = Math.min(1, sm);
+          });
+        }
+        const pa = ang((sv.pos / sv.dur) * 64); g.lineCap = 'round';
+        for (let i = 14; i >= 0; i--) { const aa = pa - i * 0.012; g.strokeStyle = 'rgba(255,255,255,' + (0.55 * (1 - i / 15)) + ')'; g.lineWidth = i === 0 ? 2.4 : 1.4; g.beginPath(); g.moveTo(Math.cos(aa) * R * 0.3, Math.sin(aa) * R * 0.3); g.lineTo(Math.cos(aa) * R * 1.05, Math.sin(aa) * R * 1.05); g.stroke(); }
+        g.restore();
       }
       // highlights
       for (const hl of s.hl) {
@@ -210,9 +243,10 @@
       g.fillStyle = 'rgba(7,7,11,0.92)'; g.beginPath(); g.arc(0, 0, cr, 0, TAU); g.fill();
       g.lineWidth = 2; g.strokeStyle = 'rgba(255,61,127,' + (0.35 + this.kickPulse * 0.65) + ')'; g.beginPath(); g.arc(0, 0, cr * (1 + this.kickPulse * 0.04), 0, TAU); g.stroke();
       g.fillStyle = '#f1ece0'; g.font = '900 ' + Math.max(14, R * 0.15) + 'px "Big Shoulders Display", Impact, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
-      g.fillText(s.center[0], 0, R * 0.035);
+      const c0 = sv && sm > 0.5 ? fmt(sv.pos) : s.center[0], c1 = sv && sm > 0.5 ? 'THE CLIP' : s.center[1];
+      g.fillText(c0, 0, R * 0.035);
       g.fillStyle = '#8b8a96'; g.font = '500 ' + Math.max(8, R * 0.045) + 'px "JetBrains Mono", ui-monospace, monospace';
-      g.fillText(s.center[1], 0, R * 0.115);
+      g.fillText(c1, 0, R * 0.115);
       g.restore();
     }
   }

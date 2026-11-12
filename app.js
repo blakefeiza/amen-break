@@ -42,7 +42,7 @@
   let volTouched = false;
   function openVol(open, auto) {
     volPanel.hidden = !open; volBtn.setAttribute('aria-expanded', open); clearTimeout(volIdle);
-    if (open) { $('#volNote').hidden = true; if (auto) volIdle = setTimeout(() => openVol(false), 8000); }
+    if (open) { if (auto) volIdle = setTimeout(() => openVol(false), 8000); }
     if (!open) volBtn.classList.remove('nudge');
   }
   function nudgeVolume() {
@@ -55,6 +55,15 @@
   document.addEventListener('pointerdown', (e) => { if (!volPanel.hidden && !e.target.closest('#volPanel, #volBtn')) openVol(false); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !volPanel.hidden) { openVol(false); volBtn.focus(); } });
   applyVol(false);
+  // Sync: delay the picture a little when the sound reaches the ears late (Bluetooth speakers and headphones report no latency)
+  const nudgeIn = $('#nudge'), nudgeOut = $('#nudgeOut');
+  try { const s = localStorage.getItem('amen-nudge'); if (s !== null && !isNaN(+s)) nudgeIn.value = +s; } catch (e) { /* private mode */ }
+  function applyNudge(save) {
+    Amen.setNudge(+nudgeIn.value); nudgeOut.textContent = nudgeIn.value + ' ms'; nudgeIn.setAttribute('aria-valuetext', nudgeIn.value + ' milliseconds');
+    if (save) { try { localStorage.setItem('amen-nudge', nudgeIn.value); } catch (e) { /* ignore */ } }
+  }
+  nudgeIn.addEventListener('input', () => { applyNudge(true); clearTimeout(volIdle); });
+  applyNudge(false);
 
   const ensureSound = async () => (soundOn ? true : turnOn());
   soundBtn.addEventListener('click', () => (soundOn ? turnOff() : turnOn()));
@@ -133,6 +142,8 @@
   let autoT = 0, autoId = null, autoScene = null;
   function scheduleAuto(name, delay) {
     clearTimeout(autoT);
+    const tr0 = AUTO[name] && findTrack(AUTO[name]); if (tr0 && tr0.itunesId) Amen.Preview.warm(tr0.itunesId);                       // decode this scene's track now
+    const keys = Object.keys(AUTO), nx = AUTO[keys[keys.indexOf(name) + 1]], tr1 = nx && findTrack(nx); if (tr1 && tr1.itunesId) Amen.Preview.prefetch(tr1.itunesId);   // and fetch the next
     if (autoId && autoScene !== name) { Amen.Preview.fadeStop(900); autoId = null; delay = Math.max(delay || 0, 1600); }   // let the old one fade out first
     if (!AUTO[name] || !soundOn || loopPaused || labPlaying || tour || autoSkip.has(name)) return;
     autoT = setTimeout(() => {
@@ -209,6 +220,7 @@
   }).join('');
   document.addEventListener('click', (e) => {
     const b = e.target.closest('[data-preview]'); if (!b) return;
+    lastHost = b.closest('.card, .tile, .erow') || b;
     if (autoId && b.dataset.preview === autoId && Amen.Preview.current === autoId) autoSkip.add(autoScene);   // they paused it: no more autoplay here
     autoId = null;
     if (labPlaying) stopLab();
@@ -227,6 +239,7 @@
 
   /* =============================================================== CHOP LAB */
   const wheel2 = new Wheel($('#wheel2'), {
+    sample: false,
     onPick(s) { announce(wheel2.describe(s).text); ensureSound().then(() => { if (!labPlaying) Amen.audition(s, 2, { allLayers: true, expected: false }); }); },
   });
   wheel2.setLayout((w, h) => ({ cx: w / 2, cy: h / 2, r: Math.min(w, h) * 0.44 }));
@@ -477,6 +490,7 @@
   let announceT = 0;
   function setActive(i, quiet) {
     if (i === activeIdx) return; activeIdx = i; paintEcho();
+    if (i >= 0) { Amen.Preview.warm(order[i].itunesId); [i + 1, i + 2].forEach((n) => { if (order[n]) Amen.Preview.prefetch(order[n].itunesId); }); }
     if (!quiet && i >= 0) Amen.ping(pingFreq(dots[i]), 0, 0.18, 0.045);
     clearTimeout(announceT); announceT = setTimeout(() => { const t = order[activeIdx]; if (t) announce('Now at ' + t.year + ': ' + t.title + ' by ' + t.artist + '. ' + (activeIdx + 1) + ' of ' + order.length + '.'); }, 900);
   }
@@ -514,9 +528,11 @@
   });
 
   // playback <-> chart: whatever preview is playing lights up its dot and row
+  let playingK = -1, dotPulse = 0;
   document.addEventListener('amen:preview', (e) => {
     const { id, state } = e.detail, k = order.findIndex((t) => String(t.itunesId) === id); if (k < 0) return;
     const on = state === 'playing'; dots[k].el.classList.toggle('is-playing', on); rows[k].classList.toggle('is-playing', on);
+    playingK = on ? k : (playingK === k ? -1 : playingK); if (!on) { const hh = dots[k].el.querySelector('.halo'); if (hh) hh.style.transform = ''; }
     if (on && echoVisible && !tour && k !== activeIdx) jumpTo(k);
   });
   // "play along": walk the list, ~10 seconds of each preview
@@ -539,8 +555,39 @@
   new IntersectionObserver((es) => { echoVisible = es[0].isIntersecting; if (!echoVisible) stopTour(); else echoDirty = true; }, { threshold: 0 }).observe($('#echoScrolly'));
   addEventListener('scroll', () => { echoDirty = true; }, { passive: true }); addEventListener('resize', () => { echoDirty = true; });
 
+  /* =============================================================== smart loading, and stopping samples you scroll past */
+  let lastHost = null, awayHost = null, awayId = null, armed = false, armT = 0;
+  const idleCb = window.requestIdleCallback || ((f) => setTimeout(f, 700));
+  const PRIME_IDS = [...new Set(TRACKS.map((t) => t.itunesId).concat([427200416, 1442919795]))];
+  idleCb(() => { Amen.prepare(); Amen.Preview.prime(PRIME_IDS); });       // build the drum kit and look up every preview URL in one request, while the browser is idle
+  const nearIO = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) Amen.Preview.prefetch(e.target.dataset.preview); }), { rootMargin: '160% 0px 160% 0px' });   // fetch bytes ~1.5 screens ahead
+  const warmIO = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) Amen.Preview.warm(e.target.dataset.preview); }), { rootMargin: '45% 0px 45% 0px' });          // decode + analyze half a screen ahead
+  $$('[data-preview]').forEach((b) => {
+    nearIO.observe(b); warmIO.observe(b);
+    const hot = () => Amen.Preview.warm(b.dataset.preview);                  // hover, touch or focus means a press is coming
+    b.addEventListener('pointerenter', hot, { passive: true }); b.addEventListener('touchstart', hot, { passive: true }); b.addEventListener('focus', hot);
+  });
+  const away = new IntersectionObserver((es) => es.forEach((e) => { if (armed && !e.isIntersecting && !tour) Amen.Preview.fadeStop(450); }), { rootMargin: '-6% 0px -6% 0px' });
+  document.addEventListener('amen:preview', (e) => {
+    const { id, state } = e.detail;
+    if (state === 'playing') {
+      let host = lastHost && (lastHost.matches('[data-preview="' + id + '"]') || lastHost.querySelector('[data-preview="' + id + '"]')) ? lastHost : null;
+      if (!host && autoId === id && autoScene) host = $('.step[data-scene="' + autoScene + '"] .card');
+      if (!host) { const b = $('[data-preview="' + id + '"]'); host = b && (b.closest('.card, .tile, .erow') || b); }
+      if (awayHost) away.unobserve(awayHost);
+      awayHost = host; awayId = id; armed = false; clearTimeout(armT);
+      if (host) { away.observe(host); armT = setTimeout(() => { armed = true; }, 900); }
+    } else if (state !== 'loading' && awayHost && id === awayId) { away.unobserve(awayHost); awayHost = null; awayId = null; armed = false; clearTimeout(armT); }
+  });
+
   /* =============================================================== frame loop */
-  const progress = $('#progress'), stage = $('#stage');
+  const progress = $('#progress');
+  // custom properties are set on the glow only (setting them on :root restyles the whole page every frame), and only when they change
+  const glowEl = $('.glow'); let gP = -1, gX = -1, gY = -1;
+  function setGlow(p, x, y) {
+    p = Math.round(p * 50) / 50; if (p !== gP) { glowEl.style.setProperty('--pulse', p); gP = p; }
+    if (Math.abs(x - gX) > 0.5 || Math.abs(y - gY) > 0.5) { glowEl.style.setProperty('--gx', x.toFixed(1) + 'px'); glowEl.style.setProperty('--gy', y.toFixed(1) + 'px'); gX = x; gY = y; }
+  }
   function onScroll() { const h = document.documentElement.scrollHeight - innerHeight; progress.style.setProperty('--p', h > 0 ? Math.min(1, scrollY / h).toFixed(4) : 0); }
   addEventListener('scroll', onScroll, { passive: true }); onScroll();
 
@@ -551,16 +598,17 @@
       Amen.setBpm(storyBpm);
     }
     wheel.s.center = SC[scene].center(storyBpm);
-    paintBreak(); wheel.draw(t);
-    if (storyVisible && wheel.cur) {
-      document.documentElement.style.setProperty('--pulse', reduce ? 0 : wheel.kickPulse.toFixed(3));
-      stage.style.setProperty('--gx', wheel.cur.cx + 'px'); stage.style.setProperty('--gy', wheel.cur.cy + 'px');
-    }
+    Amen.Preview.tick(); paintBreak(); wheel.draw(t);
+    if (storyVisible && wheel.cur) setGlow(reduce ? 0 : wheel.kickPulse, wheel.cur.cx, wheel.cur.cy);
     if (echoVisible) {
       if (echoDirty && performance.now() > lockUntil) { echoDirty = false; detect(); }
       sweepR += (sweepT - sweepR) * (reduce ? 1 : 0.12); sweepEl.setAttribute('r', sweepR.toFixed(1));
     }
-    if (labVisible) { updateLabHighlights(); wheel2.draw(t); drawScope(); if (!storyVisible) document.documentElement.style.setProperty('--pulse', wheel2.kickPulse.toFixed(3)); }
+    if (labVisible) { updateLabHighlights(); wheel2.draw(t); drawScope(); }
+    if (playingK >= 0 && dots[playingK]) {                                   // the echoes dot beats with the clip
+      const fx = Amen.Preview.fx; for (let i = 0; i < fx.length; i++) if (fx[i].b === 0) dotPulse = 1;
+      dotPulse *= 0.88; const hh = dots[playingK].el.querySelector('.halo'); if (hh) hh.style.transform = 'scale(' + (1 + 0.9 * dotPulse).toFixed(2) + ')';
+    }
     requestAnimationFrame(frame);
   }
   applyScene('hero'); paintSound(); paintLab(); setLabBpm(labBpm);

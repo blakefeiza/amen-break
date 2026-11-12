@@ -42,7 +42,7 @@
   const T = {
     bpm: BASE_BPM, playing: false, tick: 0, next: 0, timer: null, mode: 'full', seq: null,
     layers: { kick: 1, snare: 1, ghost: 1, ride: 1, crash: 1 }, expected: false, swing: 0.055,
-    audible: false, domain: 'perf', events: [], evId: 0, duck: false, vol: 0.5,
+    audible: false, domain: 'perf', events: [], evId: 0, duck: false, vol: 0.5, nudge: 0,
   };
   const lvl = () => 0.7 * T.vol * T.vol;      // 50% on the slider is deliberately gentle; 100% is about the old default
   const pvl = () => 0.8 * T.vol * T.vol;      // song previews are mastered hot, so they get the same curve
@@ -69,7 +69,7 @@
 
   function buildKit() {
     if (kitPromise) return kitPromise;
-    const sr = ctx.sampleRate;
+    const sr = ctx ? ctx.sampleRate : 44100;
     const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
     const noiseBuf = (oc, dur) => {
       const b = oc.createBuffer(1, Math.ceil(oc.sampleRate * dur), oc.sampleRate), d = b.getChannelData(0);
@@ -190,7 +190,7 @@
   }
   function visualNow() {
     const lat = T.domain === 'ctx' && ctx ? (ctx.outputLatency || ctx.baseLatency || 0) : 0;
-    return now() - lat;
+    return now() - lat - T.nudge;   // T.nudge: the listener's own delay for the picture (Bluetooth speakers)
   }
   /** Fractional source step currently sounding, or null when stopped. */
   function playhead() {
@@ -251,77 +251,182 @@
   }
   function scope(buf) { if (analyser) analyser.getByteTimeDomainData(buf); return !!analyser; }
 
-  /* ------------------------------------------------------------------ 30-second previews (Apple iTunes Search API) */
+  /* ------------------------------------------------------------------ 30-second previews (Apple iTunes Search API)
+   * Previews are fetched, decoded and played on the same Web Audio clock as the drums. That lets the picture be driven
+   * by the clip itself: each clip is analyzed ahead of time for kick / snare / hi-hat hits, and the wheel draws every hit
+   * at the moment it is heard (audio clock, minus the device's output latency, minus the listener's own nudge).
+   */
   const Preview = (function () {
-    const el = new Audio(); el.preload = 'none'; el.crossOrigin = 'anonymous';
-    let fadeMul = 1, fadeRaf = 0, pg = null;   // pg: gain node once the element is routed through Web Audio (volume then works on iOS too)
-    const applyEl = () => { const v = Math.max(0, Math.min(1, pvl() * fadeMul)); if (pg) { pg.gain.value = v; el.volume = 1; } else el.volume = v; };
-    const route = () => { if (pg || !ctx) return; try { const s = ctx.createMediaElementSource(el); pg = ctx.createGain(); s.connect(pg); pg.connect(ctx.destination); } catch (err) { pg = null; } applyEl(); };
-    applyEl();
-    let current = null; const cache = {};
+    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
     const emit = (id, state) => document.dispatchEvent(new CustomEvent('amen:preview', { detail: { id: String(id), state } }));
-    el.addEventListener('ended', () => { const id = current; current = null; if (id) emit(id, 'idle'); setDuck(false, 0.3); });
-    el.addEventListener('pause', () => { if (current && !el.ended) { const id = current; current = null; emit(id, 'idle'); setDuck(false, 0.3); } });
-    el.addEventListener('error', () => { if (current) { const id = current; current = null; emit(id, 'error'); setDuck(false); } });
-    async function urlFor(id) {
-      if (cache[id]) return cache[id];
-      try { const s = sessionStorage.getItem('amen-prev-' + id); if (s) return (cache[id] = s); } catch (e) { /* ignore */ }
-      let u = null;
-      for (const country of ['us', 'gb']) {   // some tracks only exist in the UK storefront
-        const r = await fetch('https://itunes.apple.com/lookup?id=' + encodeURIComponent(id) + '&country=' + country);
-        const j = await r.json(); u = j.results && j.results[0] && j.results[0].previewUrl; if (u) break;
+    const slowNet = () => { const c = navigator.connection; return !!(c && (c.saveData || /2g/.test(c.effectiveType || ''))); };
+    const urlMap = {}, raw = new Map(), bufs = new Map(), ana = new Map(), pending = new Map();
+    try { Object.assign(urlMap, JSON.parse(sessionStorage.getItem('amen-urls') || '{}')); } catch (err) { /* ignore */ }
+    const saveUrls = () => { try { sessionStorage.setItem('amen-urls', JSON.stringify(urlMap)); } catch (err) { /* ignore */ } };
+    const once = (key, fn) => { if (pending.has(key)) return pending.get(key); const p = fn(); pending.set(key, p); const done = () => pending.delete(key); p.then(done, done); return p; };
+    let current = null, loading = null, token = 0, node = null, lastView = null, fx = [], legacyOn = false;
+
+    // ---- data: one batched lookup for every URL, then bytes, then decoded audio, then analysis
+    async function lookup(ids) {
+      const need = ids.map(String).filter((i) => !urlMap[i]); if (!need.length) return;
+      for (const country of ['us', 'gb']) {            // a few tracks only exist in the UK storefront
+        const missing = need.filter((i) => !urlMap[i]); if (!missing.length) break;
+        const r = await fetch('https://itunes.apple.com/lookup?id=' + missing.join(',') + '&country=' + country); const j = await r.json();
+        (j.results || []).forEach((x) => { if (x.previewUrl) urlMap[String(x.trackId)] = x.previewUrl; });
       }
-      if (!u) throw new Error('no preview');
-      cache[id] = u; try { sessionStorage.setItem('amen-prev-' + id, u); } catch (e) { /* ignore */ }
-      return u;
+      saveUrls();
     }
-    let loading = null;
+    const getUrl = (id) => (urlMap[id] ? Promise.resolve(urlMap[id]) : once('u' + id, async () => { await lookup([id]); if (!urlMap[id]) throw new Error('no preview'); return urlMap[id]; }));
+    const getRaw = (id) => (raw.has(id) ? Promise.resolve(raw.get(id)) : once('r' + id, async () => {
+      const r = await fetch(await getUrl(id), { mode: 'cors' }); if (!r.ok) throw new Error('fetch ' + r.status);
+      const ab = await r.arrayBuffer(); raw.set(id, ab); if (raw.size > 40) raw.delete(raw.keys().next().value); return ab;
+    }));
+    let dctx = null;                                                  // decoding needs no user gesture and no live AudioContext
+    const decode = (ab) => { if (!dctx) dctx = new OAC(2, 1, 44100); return new Promise((res, rej) => { const p = dctx.decodeAudioData(ab, res, rej); if (p && p.then) p.then(res, rej); }); };
+    const getBuf = (id) => {
+      if (bufs.has(id)) { const b = bufs.get(id); bufs.delete(id); bufs.set(id, b); return Promise.resolve(b); }
+      return once('b' + id, async () => {
+        const b = await decode((await getRaw(id)).slice(0)); bufs.set(id, b);
+        while (bufs.size > 4) { const k = [...bufs.keys()].find((x) => x !== current); if (k === undefined) break; bufs.delete(k); }
+        return b;
+      });
+    };
+
+    // ---- analysis: three band envelopes rendered off the main thread, then onset picking with cross-band suppression
+    const CFG = { low: 95, lowStages: 2, mid: 1800, midQ: 0.5, high: 8000, kSup: 0.8, sSup: 0.7, hSup: 0.4, gaps: [90, 130, 80], ks: [1.4, 2, 1.9], floor: 0.2, shift: 0.005, snareLin: true, sFloor: 0.8, kShift: 0.016 };
+    function novelty(env) {
+      const n = env.length, srt = Float32Array.from(env).sort(), p95 = srt[Math.floor(n * 0.95)] || 1e-6, nv = new Float32Array(n);
+      for (let i = 2; i < n; i++) nv[i] = Math.max(0, Math.log(1 + 30 * env[i] / p95) - Math.log(1 + 30 * env[i - 2] / p95));
+      return nv;
+    }
+    function noveltyLin(env) {      // loudness-weighted: a quiet tick after silence is small, a loud hit is big
+      const n = env.length, srt = Float32Array.from(env).sort(), p95 = srt[Math.floor(n * 0.95)] || 1e-6, nv = new Float32Array(n);
+      for (let i = 2; i < n; i++) nv[i] = Math.max(0, (env[i] - env[i - 2]) / p95) * 1.6;
+      return nv;
+    }
+    function pick(nv, fr, gapMs, k, floor, shift) {
+      const n = nv.length, out = [], win = 100; let last = -1e9;
+      for (let i = 3; i < n - 3; i++) {
+        if (nv[i] < nv[i - 1] || nv[i] <= nv[i + 1]) continue;
+        let s = 0, c = 0; for (let j = Math.max(0, i - win); j < Math.min(n, i + win); j += 2) { s += nv[j]; c++; }
+        if (nv[i] > (s / c) * k + floor && ((i - last) * 1000) / fr >= gapMs) { out.push({ t: Math.max(0, i / fr - shift), v: Math.min(1, 0.3 + nv[i] / 1.2) }); last = i; }
+      }
+      return out;
+    }
+    const analyze = (id, buf, over) => (ana.has(id) && !over ? Promise.resolve(ana.get(id)) : once('a' + id + (over ? Math.random() : ''), async () => {
+      const C = Object.assign({}, CFG, over), sr = 32000, hop = 160, fr = sr / hop, oc = new OAC(3, Math.ceil(buf.duration * sr), sr), src = oc.createBufferSource(); src.buffer = buf;
+      const merger = oc.createChannelMerger(3), absCurve = new Float32Array([1, 0, 1]);
+      const chain = (ch, type, f, q, stages) => {
+        let node = src;
+        for (let s = 0; s < stages; s++) { const filt = oc.createBiquadFilter(); filt.type = type; filt.frequency.value = f; filt.Q.value = q; node.connect(filt); node = filt; }
+        const ws = oc.createWaveShaper(); ws.curve = absCurve; const lp = oc.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 35;
+        node.connect(ws); ws.connect(lp); lp.connect(merger, 0, ch);
+      };
+      chain(0, 'lowpass', C.low, 0.7, C.lowStages); chain(1, 'bandpass', C.mid, C.midQ, 1); chain(2, 'highpass', C.high, 0.7, 1);
+      merger.connect(oc.destination); src.start(0);
+      const rendered = await oc.startRendering(), envs = [0, 1, 2].map((ch) => {
+        const d = rendered.getChannelData(ch), n = Math.floor(d.length / hop), env = new Float32Array(n);
+        for (let k = 0; k < n; k++) { let m = 0; for (let q = k * hop; q < k * hop + hop; q++) if (d[q] > m) m = d[q]; env[k] = m; }
+        return env;
+      }), nvs = envs.map(novelty), lin = envs.map(noveltyLin);
+      const n = Math.min(nvs[0].length, nvs[1].length, nvs[2].length), kn = new Float32Array(n), sn = new Float32Array(n), hn = new Float32Array(n);
+      for (let k = 0; k < n; k++) {
+        kn[k] = Math.max(0, nvs[0][k] - C.kSup * nvs[1][k]);                 // a snare's body is not a kick
+        sn[k] = C.snareLin ? lin[1][k] : Math.max(0, nvs[1][k] - C.sSup * nvs[2][k]);   // a ride tick is not a snare: weigh by loudness
+        hn[k] = Math.max(0, nvs[2][k] - C.hSup * nvs[1][k]);                 // and a snare crack is not a hi-hat
+      }
+      const marks = [].concat(pick(kn, fr, C.gaps[0], C.ks[0], C.floor, C.kShift).map((m) => (m.b = 0, m)), pick(sn, fr, C.gaps[1], C.ks[1], C.snareLin ? C.sFloor : C.floor, C.shift).map((m) => (m.b = 1, m)), pick(hn, fr, C.gaps[2], C.ks[2], C.floor, C.shift).map((m) => (m.b = 2, m))).sort((a, b) => a.t - b.t);
+      const res = { marks, dur: buf.duration }; if (!over) ana.set(id, res); return res;
+    }));
+
+    // ---- playback graph: source -> fade -> volume -> speakers, with an analyser tapped before the volume
+    let fade = null, vol = null, an = null;
+    const spec = new Uint8Array(512), bands = new Float32Array(64);
+    function graph() { if (fade) return; fade = ctx.createGain(); vol = ctx.createGain(); an = ctx.createAnalyser(); an.fftSize = 1024; an.smoothingTimeConstant = 0.55; vol.gain.value = pvl(); fade.connect(vol); vol.connect(ctx.destination); fade.connect(an); }
+    const vlat = () => (ctx.outputLatency || ctx.baseLatency || 0) + T.nudge;
+    function start(id, buf, opts) {
+      graph();
+      const src = ctx.createBufferSource(); src.buffer = buf; src.connect(fade);
+      const t0 = ctx.currentTime + 0.03, fadeIn = !!(opts && opts.fade);
+      fade.gain.cancelScheduledValues(0);
+      if (fadeIn) { fade.gain.setValueAtTime(0.0001, t0); fade.gain.linearRampToValueAtTime(1, t0 + 1.8); } else fade.gain.setValueAtTime(1, t0);
+      src.start(t0); node = { src, id, t0, dur: buf.duration }; current = id;
+      setDuck(true, fadeIn ? 0.5 : 0.03);
+      src.onended = () => { if (node && node.src === src) { const i = current; node = null; current = null; emit(i, 'idle'); setDuck(false, 0.3); } };
+      emit(id, 'playing'); analyze(id, buf).catch(() => {});
+    }
+    function stopNow() {
+      if (legacyOn) { legacyOn = false; el.pause(); const i = current; current = null; if (i) emit(i, 'idle'); setDuck(false, 0.3); return; }
+      if (!node) return; const n = node, id = current; node = null; current = null; n.src.onended = null;
+      try { const t = ctx.currentTime; fade.gain.cancelScheduledValues(t); fade.gain.setValueAtTime(fade.gain.value, t); fade.gain.linearRampToValueAtTime(0.0001, t + 0.04); n.src.stop(t + 0.05); } catch (err) { /* ignore */ }
+      emit(id, 'idle'); setDuck(false, 0.3);
+    }
+    // a plain <audio> element is the fallback if fetching or decoding fails
+    const el = new Audio(); el.preload = 'none';
+    el.addEventListener('ended', () => { if (legacyOn) stopNow(); });
+    async function legacyPlay(id, opts) {
+      try { el.src = await getUrl(id); el.volume = pvl(); legacyOn = true; current = id; setDuck(true, opts && opts.fade ? 0.5 : 0.03); await el.play(); emit(id, 'playing'); }
+      catch (err) { legacyOn = false; current = null; setDuck(false); emit(id, 'error'); }
+    }
     async function toggle(id, opts) {
       id = String(id);
-      if (current === id) { el.pause(); return; }
-      if (loading === id) { loading = null; emit(id, 'idle'); return; }     // second click while it loads cancels
-      if (current) { const old = current; current = null; el.pause(); emit(old, 'idle'); }
+      if (current === id) { stopNow(); return; }                       // second click stops
+      if (loading === id) { loading = null; emit(id, 'idle'); return; } // second click while it loads cancels
+      if (current) stopNow();
       if (loading) emit(loading, 'idle');
-      loading = id; emit(id, 'loading');
+      loading = id; const my = ++token; emit(id, 'loading');
       try {
-        ensureCtx(); try { await ctx.resume(); } catch (err) { /* ignore */ }
-        route();
-        const u = await urlFor(id); if (loading !== id) return;
-        el.src = u; current = id; loading = null;
-        setDuck(true, opts && opts.fade ? 0.5 : 0.03); await el.play(); emit(id, 'playing');
-      } catch (e) { if (loading === id) loading = null; current = null; setDuck(false); emit(id, 'error'); }
+        ensureCtx(); const resumed = ctx.resume().catch(() => {});
+        const buf = await getBuf(id); await resumed;
+        if (loading !== id || my !== token) return;
+        loading = null; start(id, buf, opts);
+      } catch (err) { if (loading !== id || my !== token) return; loading = null; await legacyPlay(id, opts); }
     }
-    // iOS Safari ignores script control of media volume; the page tells people to use the phone's buttons there
-    function setVolume() { applyEl(); }
-    function fadeTo(target, ms, done) {
-      cancelAnimationFrame(fadeRaf);
-      if (volumeLocked()) { fadeMul = target; applyEl(); if (done) done(); return; }
-      const from = fadeMul, t0 = performance.now();
-      const step = (t) => { const k = Math.min(1, (t - t0) / ms); fadeMul = from + (target - from) * k; applyEl(); if (k < 1) fadeRaf = requestAnimationFrame(step); else if (done) done(); };
-      fadeRaf = requestAnimationFrame(step);
-    }
-    /** Start a preview with a fade-in while the synth loop fades out. */
-    async function auto(id) {
-      id = String(id); if (current === id || loading === id) return;
-      cancelAnimationFrame(fadeRaf); fadeMul = 0; applyEl();
-      await toggle(id, { fade: true });
-      if (current === id) fadeTo(1, 1800); else { fadeMul = 1; applyEl(); }
-    }
-    /** Fade the current preview out and bring the synth loop back underneath it. */
+    const auto = async (id) => { id = String(id); if (current === id || loading === id) return; await toggle(id, { fade: true }); };
     function fadeStop(ms) {
-      if (!current && !loading) return;
-      setDuck(false, 0.35);
-      fadeTo(0, ms || 900, () => { if (current) el.pause(); fadeMul = 1; applyEl(); });
+      if (loading) { const l = loading; loading = null; emit(l, 'idle'); }
+      if (legacyOn) { stopNow(); return; }
+      if (!node) return; const n = node, t = ctx.currentTime, d = (ms || 900) / 1000;
+      fade.gain.cancelScheduledValues(t); fade.gain.setValueAtTime(fade.gain.value, t); fade.gain.linearRampToValueAtTime(0.0001, t + d);
+      setDuck(false, 0.35); setTimeout(() => { if (node && node.src === n.src) stopNow(); }, ms + 40);
     }
-    function volumeLocked() { if (pg) return false; const old = el.volume; el.volume = old > 0.5 ? 0.25 : 0.75; const locked = Math.abs(el.volume - (old > 0.5 ? 0.25 : 0.75)) > 0.001; el.volume = old; return locked; }
-    function stopAll() { cancelAnimationFrame(fadeRaf); fadeMul = 1; applyEl(); if (loading) { const l = loading; loading = null; emit(l, 'idle'); } if (current) el.pause(); }
-    return { toggle, auto, fadeStop, stopAll, setVolume, volumeLocked, get current() { return current; }, get level() { return pg ? pg.gain.value : el.volume; }, get routed() { return !!pg; } };
+    function stopAll() { if (loading) { const l = loading; loading = null; emit(l, 'idle'); } stopNow(); }
+    function setVolume() { if (vol) vol.gain.setTargetAtTime(pvl(), ctx.currentTime, 0.02); if (legacyOn) el.volume = pvl(); }
+
+    // ---- what the picture reads every frame
+    function view() { if (!node) return null; const a = ana.get(node.id); return { id: node.id, pos: Math.max(0, ctx.currentTime - node.t0 - vlat()), dur: node.dur, marks: a ? a.marks : null }; }
+    let fxIdx = 0, fxMarks = null, fxId = null;
+    function tick() {
+      const v = view(); lastView = v; fx = [];
+      if (!v || !v.marks) return v;
+      if (fxMarks !== v.marks || fxId !== v.id) { fxMarks = v.marks; fxId = v.id; fxIdx = 0; while (fxIdx < v.marks.length && v.marks[fxIdx].t < v.pos - 0.2) fxIdx++; }
+      while (fxIdx < v.marks.length && v.marks[fxIdx].t <= v.pos) fx.push(v.marks[fxIdx++]);
+      return v;
+    }
+    function spectrum() {
+      if (!an || !node) return null; an.getByteFrequencyData(spec); const binHz = ctx.sampleRate / 1024;
+      for (let i = 0; i < 64; i++) {
+        const a = Math.max(1, Math.floor(60 * Math.pow(13000 / 60, i / 64) / binHz)), b = Math.max(a + 1, Math.ceil(60 * Math.pow(13000 / 60, (i + 1) / 64) / binHz)); let s = 0;
+        for (let k = a; k < b && k < 512; k++) s += spec[k]; bands[i] = s / ((b - a) * 255);
+      }
+      return bands;
+    }
+
+    // ---- smart loading hooks
+    const prime = (ids) => lookup(ids.map(String)).catch(() => {});
+    const prefetch = (id) => { id = String(id); if (slowNet() || raw.has(id)) return; getRaw(id).catch(() => {}); };
+    const warm = (id) => { id = String(id); if (slowNet()) return; getBuf(id).then((b) => analyze(id, b)).catch(() => {}); };
+    const status = (id) => (bufs.has(String(id)) ? 'ready' : raw.has(String(id)) ? 'fetched' : 'cold');
+    return {
+      toggle, auto, fadeStop, stopAll, setVolume, prime, prefetch, warm, status, tick, spectrum, volumeLocked: () => false, analyzeBuffer: (b, over) => analyze('probe' + Math.random(), b, over || {}),
+      get current() { return current; }, get lastView() { return lastView; }, get fx() { return fx; },
+    };
   })();
 
   window.Amen = {
     BASE_BPM, VOICES, BARS, EXPECTED, hits, T, start, stop, playhead, eventsSince, audition,
     enable, mute, unmute, setDuck, ping, scope, Preview, srcOf, setVolume,
-    get vol() { return T.vol; },
+    get vol() { return T.vol; }, prepare() { return buildKit(); }, setNudge(ms) { T.nudge = Math.max(0, ms) / 1000; }, visualNow,
     get ctx() { return ctx; }, get ready() { return !!kit; }, get kit() { return kit; },
     setBpm(b) { T.bpm = b; }, setLayers(l) { Object.assign(T.layers, l); },
   };
