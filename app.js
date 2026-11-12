@@ -204,8 +204,6 @@
   // "Wait, that has it?" tiles: every claim below is from Wikipedia or MusicBrainz. Only clips that really show the pattern get a play button.
   const TILES = [
     { key: 'futurama', tag: 'A cartoon', hero: true, line: 'The opening theme of Futurama is built on it. A later remix of the theme swapped the break for newly recorded drums.' },
-    { key: 'steal the amen', tag: 'Game-music composer', line: 'C418, who scored Minecraft, titled this track “If you don’t know what to do just steal the amen break.”' },
-    { key: 'up the box', tag: 'Experimental electronic', line: 'A flanged Amen break runs through “Up the Box” on Andy Stott’s 2012 album Luxury Problems.' },
     { key: 'crystalline', tag: 'Art-pop', line: 'Björk’s song ends in a drum & bass section that uses the break.' },
     { key: 'jackie (b', tag: 'R&B', line: 'Yes, even here. The track samples “Amen, Brother.”' },
     { key: 'untitled 05', tag: 'Rap', line: 'A downtempo, jazz-flavored Kendrick Lamar track with the break underneath.' },
@@ -215,7 +213,7 @@
   ];
   $('#tiles').innerHTML = TILES.map((d) => {
     const t = findTrack(d.key); if (!t) return '';
-    const play = t.itunesId && t.shows !== false;
+    const play = !!t.itunesId;   // the record sits out this section, so every clip plays, whether or not it maps to the pattern
     return '<li class="tile' + (d.hero ? ' tile--hero' : '') + '"><div class="tile-top"><span class="tile-tag">' + esc(d.tag) + '</span><span class="tile-eq" aria-hidden="true"><i></i><i></i><i></i></span><span class="tile-year" aria-label="' + t.year + '">' + t.year + '</span></div>' +
       '<h3>' + esc(t.title.replace(/ Original Series Theme \(TV version\)/, ' theme')) + '</h3><p class="tile-by">' + esc(t.artist) + '</p><p class="tile-line">' + esc(d.line) + '</p>' +
       (play ? '<button class="btn btn--sm" data-preview="' + t.itunesId + '" aria-label="Play 30-second preview of ' + esc(t.title) + ' by ' + esc(t.artist) + '"><span class="play-ico"></span><span class="pv-label">Listen</span></button>'
@@ -561,7 +559,7 @@
   /* =============================================================== smart loading, and stopping samples you scroll past */
   let lastHost = null, awayHost = null, awayId = null, armed = false, armT = 0;
   const idleCb = window.requestIdleCallback || ((f) => setTimeout(f, 700));
-  const PRIME_IDS = [...new Set(TRACKS.filter((t) => t.shows !== false).map((t) => t.itunesId).concat([427200416, 1442919795]))];
+  const PRIME_IDS = [...new Set(TRACKS.map((t) => t.itunesId).concat([427200416, 1442919795]))];
   idleCb(() => { Amen.prepare(); Amen.Preview.prime(PRIME_IDS); });       // build the drum kit and look up every preview URL in one request, while the browser is idle
   const nearIO = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) Amen.Preview.prefetch(e.target.dataset.preview); }), { rootMargin: '160% 0px 160% 0px' });   // fetch bytes ~1.5 screens ahead
   const warmIO = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) Amen.Preview.warm(e.target.dataset.preview); }), { rootMargin: '45% 0px 45% 0px' });          // decode + analyze half a screen ahead

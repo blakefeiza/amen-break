@@ -398,7 +398,7 @@ window.AMEN_TRACKS = [
    "s1": 0.58,
    "bpm": 125
   },
-  "shows": true
+  "shows": false
  },
  {
   "id": "wp-jackiebmf",
